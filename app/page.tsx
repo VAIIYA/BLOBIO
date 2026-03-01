@@ -156,698 +156,590 @@ function createFoodBgDots(count = 100): NetPellet[] {
   return pellets;
 }
 
-function wsUrl(): string {
-  const override = process.env.NEXT_PUBLIC_WS_URL;
-  if (override) return override;
-  if (typeof window === "undefined") return "ws://localhost:8080/ws";
+useEffect(() => {
+  let rafId = 0;
+  let hudUpdatedAt = 0;
 
-  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-  return `${protocol}//${window.location.hostname}:8080/ws`;
-}
+  const draw = () => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-function colorFromName(name: string): string {
-  let hash = 0;
-  for (let i = 0; i < name.length; i += 1) {
-    hash = (hash * 31 + name.charCodeAt(i)) | 0;
-  }
-  const hue = Math.abs(hash % 360);
-  return `hsl(${hue} 75% 52%)`;
-}
+    const render = renderRef.current;
+    const now = performance.now();
+    const dt = clamp((now - (render.lastFrameAt || now)) / 1000, 0, 0.045);
+    render.lastFrameAt = now;
+    render.fps = Math.round(1 / Math.max(dt, 0.0001));
 
-export default function Page() {
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
 
-  const renderRef = useRef({
-    prevSnapshot: null as NetSnapshot | null,
-    currSnapshot: null as NetSnapshot | null,
-    lastSnapshotRecvAt: 0,
-    camera: { x: 0, y: 0, zoom: 1 },
-    mouseScreen: { x: 0, y: 0 },
-    fps: 60,
-    lastFrameAt: 0,
-    worldSize: WORLD_SIZE_DEFAULT,
-    ping: 0,
-    connected: false,
-    fallbackPellets: createFoodBgDots(),
-  });
+    // Dark Theme Background
+    ctx.fillStyle = "#0f172a";
+    ctx.fillRect(0, 0, w, h);
 
-  const inputRef = useRef({ splitPressed: false, ejectPressed: false });
-  const serverRef = useRef({
-    playerId: "",
-    roomId: "",
-  });
+    const prevSnap = render.prevSnapshot;
+    const currSnap = render.currSnapshot;
 
-  const [nameInput, setNameInput] = useState("Blob");
-  const [roomInput, setRoomInput] = useState("main");
-  const [gameMode, setGameMode] = useState<"ffa" | "team">("ffa");
-  const [selectedSkin, setSelectedSkin] = useState("default");
-  const [joinedRoom, setJoinedRoom] = useState("");
-  const [started, setStarted] = useState(false);
+    const alpha = currSnap
+      ? clamp((performance.now() - render.lastSnapshotRecvAt) / SNAPSHOT_MS, 0, 1)
+      : 1;
 
-  // Modals & HUD state
-  const [showProfile, setShowProfile] = useState(false);
-  const [showStore, setShowStore] = useState(false);
-  const [isPaused, setIsPaused] = useState(false);
-  const [activeStoreTab, setActiveStoreTab] = useState<"premium" | "free">("premium");
+    let players = new Map<string, NetPlayer>();
+    let cells: NetCell[] = [];
+    let pellets: NetPellet[] = render.fallbackPellets;
+    let viruses: NetVirus[] = [];
+    let powerups: NetPowerUp[] = [];
+    let obstacles: NetObstacle[] = [];
 
-  // Auth & Profile state
-  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
-  const [dbLeaderboards, setDbLeaderboards] = useState({ mass: [] as any[], kill: [] as any[] });
+    if (currSnap) {
+      players = new Map(currSnap.players.map((p) => [p.id, p]));
+      const prevCells = new Map((prevSnap?.cells ?? []).map((c) => [c.id, c]));
 
-  // Edit Profile internal state
-  const [editProfileData, setEditProfileData] = useState({ username: "", twitter: "", youtube: "", bio: "" });
+      cells = currSnap.cells.map((c: any) => {
+        const prev = prevCells.get(c.id);
+        if (!prev) return c;
+        return {
+          ...c,
+          x: lerp(prev.x, c.x, alpha),
+          y: lerp(prev.y, c.y, alpha),
+          mass: lerp(prev.mass, c.mass, alpha),
+        };
+      });
 
-  const [hud, setHud] = useState<HudSnapshot>({
-    fps: 60,
-    ping: 0,
-    connected: false,
-    playerMass: 0,
-    playerAlive: false,
-    leaderboard: [],
-  });
-
-  const localColor = useMemo(() => colorFromName(nameInput || "Blob"), [nameInput]);
-
-  useEffect(() => {
-    async function init() {
-      await initSchema();
-      const massLb = await getTopMassPlayers(5);
-      const killLb = await getTopKillPlayers(5);
-      setDbLeaderboards({ mass: massLb, kill: killLb });
+      pellets = currSnap.pellets;
+      viruses = currSnap.viruses;
+      powerups = currSnap.powerups;
+      obstacles = currSnap.obstacles;
     }
-    init();
-  }, []);
 
-  const handleLogin = async () => {
-    const wallet = await auth.connect();
-    if (wallet) {
-      let profile = await getUserProfile(wallet);
+    const localId = serverRef.current.playerId;
+    const myCells = cells.filter((c) => c.ownerId === localId);
+    const center = centroid(myCells);
+    const totalMass = myCells.reduce((sum, c) => sum + c.mass, 0);
+    const desiredZoom = clamp(1.5 / Math.pow(Math.max(totalMass, 60) / 60, 0.22), 0.18, 1.2);
+
+    render.camera.x += (center.x - render.camera.x) * dt * 6;
+    render.camera.y += (center.y - render.camera.y) * dt * 6;
+    render.camera.zoom += (desiredZoom - render.camera.zoom) * dt * 4;
+
+    const halfWorld = render.worldSize / 2;
+    render.camera.x = clamp(render.camera.x, -halfWorld, halfWorld);
+    render.camera.y = clamp(render.camera.y, -halfWorld, halfWorld);
+
+    const zoom = render.camera.zoom;
+    const left = render.camera.x - w / 2 / zoom;
+    const right = render.camera.x + w / 2 / zoom;
+    const top = render.camera.y - h / 2 / zoom;
+    const bottom = render.camera.y + h / 2 / zoom;
+
+    ctx.save();
+    ctx.translate(w / 2, h / 2);
+    ctx.scale(zoom, zoom);
+    ctx.translate(-render.camera.x, -render.camera.y);
+
+    drawGrid(ctx, left, right, top, bottom);
+    drawBorders(ctx, render.worldSize);
+
+    for (const pellet of pellets) {
+      const r = cellRadius(pellet.mass);
+      ctx.fillStyle = pellet.color;
+      ctx.beginPath();
+      ctx.arc(pellet.x, pellet.y, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    for (const virus of viruses) {
+      drawVirus(ctx, virus, zoom);
+    }
+
+    for (const pw of powerups) {
+      drawPowerUp(ctx, pw, zoom);
+    }
+
+    for (const obs of obstacles) {
+      drawObstacle(ctx, obs, zoom);
+    }
+
+    const sortedCells = [...cells].sort((a, b) => a.mass - b.mass);
+    for (const cell of sortedCells) {
+      const owner = players.get(cell.ownerId);
+      if (!owner) continue;
+      drawCell(ctx, cell, owner, zoom);
+    }
+
+    ctx.restore();
+
+    if (currSnap && now - hudUpdatedAt > 120) {
+      const ranking = currSnap.leaderboard.map((entry: any) => ({
+        name: entry.name,
+        mass: entry.mass,
+        you: entry.id === localId,
+      }));
+
+      setHud({
+        fps: render.fps,
+        ping: render.ping,
+        connected: render.connected,
+        playerMass: totalMass,
+        playerAlive: myCells.length > 0,
+        leaderboard: ranking,
+      });
+      hudUpdatedAt = now;
+    }
+  };
+
+  const loop = () => {
+    draw();
+    rafId = requestAnimationFrame(loop);
+  };
+
+  rafId = requestAnimationFrame(loop);
+  return () => cancelAnimationFrame(rafId);
+}, []);
+
+useEffect(() => {
+  const inputTimer = setInterval(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+    const render = renderRef.current;
+    const camera = render.camera;
+    const mouse = render.mouseScreen;
+    const target = {
+      x: camera.x + (mouse.x - window.innerWidth / 2) / camera.zoom,
+      y: camera.y + (mouse.y - window.innerHeight / 2) / camera.zoom,
+    };
+
+    ws.send(
+      JSON.stringify({
+        type: "input",
+        target,
+        split: inputRef.current.splitPressed,
+        eject: inputRef.current.ejectPressed,
+      }),
+    );
+
+    inputRef.current.splitPressed = false;
+    inputRef.current.ejectPressed = false;
+  }, 33);
+
+  const pingTimer = setInterval(() => {
+    const ws = wsRef.current;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: "ping", t: Date.now() }));
+  }, 2000);
+
+  return () => {
+    clearInterval(inputTimer);
+    clearInterval(pingTimer);
+  };
+}, []);
+
+useEffect(() => {
+  return () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+  };
+}, []);
+
+// Routing logic to handle /ffa, /team, /profile
+useEffect(() => {
+  if (typeof window !== 'undefined') {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes('/profile')) {
+      setShowProfile(true);
+    } else if (path.includes('/team')) {
+      setGameMode('team');
+    } else if (path.includes('/ffa')) {
+      setGameMode('ffa');
+    }
+  }
+}, []);
+
+const handleLogin = async () => {
+  try {
+    const address = await auth.connect();
+    if (address) {
+      let profile = await getUserProfile(address);
       if (!profile) {
-        profile = await createUserProfile(wallet, nameInput || 'Guest');
+        profile = await createUserProfile(address, nameInput || 'Guest');
       }
       if (profile) {
         setCurrentUser(profile);
         setNameInput(profile.username);
-        setEditProfileData({ username: profile.username, twitter: profile.twitter || "", youtube: profile.youtube || "", bio: profile.bio || "" });
+        setEditProfileData({
+          username: profile.username,
+          bio: profile.bio || "",
+          twitter: profile.twitter || "",
+          youtube: profile.youtube || ""
+        });
       }
     }
+  } catch (err) {
+    console.error("Login failed", err);
+  }
+};
+
+const wsUrl = () => {
+  if (typeof window === 'undefined') return '';
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const host = window.location.hostname;
+
+  if (host === 'localhost' || host === '127.0.0.1') {
+    return `${protocol}//${host}:8080/ws`;
+  }
+
+  const backendUrl = process.env.NEXT_PUBLIC_WS_URL;
+  if (backendUrl) return backendUrl;
+
+  return `${protocol}//${host}:8080/ws`;
+};
+
+const connect = (name: string, roomId: string) => {
+  if (wsRef.current) {
+    wsRef.current.close();
+  }
+
+  const url = wsUrl();
+  console.log("Connecting to:", url);
+  const ws = new WebSocket(url);
+  wsRef.current = ws;
+
+  ws.onopen = () => {
+    renderRef.current.connected = true;
+    setHud(prev => ({ ...prev, connected: true }));
+    ws.send(
+      JSON.stringify({
+        type: "join",
+        name: name.trim() || "Blob",
+        roomId: roomId.trim() || "main",
+        color: localColor,
+        skin: selectedSkin,
+        gameMode: gameMode,
+      }),
+    );
   };
 
-  const saveProfile = async () => {
-    if (!currentUser) return;
-    const updated = { ...currentUser, ...editProfileData };
-    await updateUserProfile(updated);
-    setCurrentUser(updated);
-    setNameInput(updated.username);
-    alert("Profile saved!");
-  };
+  ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data as string);
 
-  const handleBuySkin = async (skinId: string) => {
-    if (!auth.isConnected() || !currentUser) {
-      alert("Please connect wallet first");
+    if (msg.type === "welcome") {
+      serverRef.current.playerId = msg.playerId;
+      serverRef.current.roomId = msg.roomId;
+      setJoinedRoom(msg.roomId);
+      renderRef.current.worldSize = Number(msg.worldSize || WORLD_SIZE_DEFAULT);
       return;
     }
-    const success = await auth.purchaseSkin(0.1, "2Z9eW3nwa2GZUM1JzXdfBK1MN57RPA2PrhuTREEZ31VY");
-    if (success) {
-      await addOwnedSkin(auth.walletAddress!, skinId);
-      const newOwned = [...(currentUser.owned_skins || freeSkins.map(s => s.id)), skinId];
-      setCurrentUser({ ...currentUser, owned_skins: newOwned });
-      alert(`Successfully purchased ${skinId}!`);
+
+    if (msg.type === "snapshot") {
+      const snapshot = msg as NetSnapshot;
+      const render = renderRef.current;
+      render.prevSnapshot = render.currSnapshot;
+      render.currSnapshot = snapshot;
+      render.lastSnapshotRecvAt = performance.now();
+      return;
+    }
+
+    if (msg.type === "dead") {
+      setHud((prev: any) => ({ ...prev, playerAlive: false }));
+      return;
+    }
+
+    if (msg.type === "pong" && Number.isFinite(msg.t)) {
+      renderRef.current.ping = Math.max(0, Date.now() - msg.t);
     }
   };
 
-  useEffect(() => {
-    const onResize = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(window.innerWidth * dpr);
-      canvas.height = Math.floor(window.innerHeight * dpr);
-      canvas.style.width = `${window.innerWidth}px`;
-      canvas.style.height = `${window.innerHeight}px`;
-      const ctx = canvas.getContext("2d");
-      if (ctx) {
-        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      }
-    };
-
-    onResize();
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  useEffect(() => {
-    const onMouseMove = (e: MouseEvent) => {
-      renderRef.current.mouseScreen = { x: e.clientX, y: e.clientY };
-    };
-
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.code === "Space") {
-        e.preventDefault();
-        inputRef.current.splitPressed = true;
-      }
-      if (e.key.toLowerCase() === "e") {
-        inputRef.current.ejectPressed = true;
-      }
-    };
-
-    window.addEventListener("mousemove", onMouseMove);
-    window.addEventListener("keydown", onKeyDown);
-    return () => {
-      window.removeEventListener("mousemove", onMouseMove);
-      window.removeEventListener("keydown", onKeyDown);
-    };
-  }, []);
-
-  useEffect(() => {
-    let rafId = 0;
-    let hudUpdatedAt = 0;
-
-    const draw = () => {
-      const canvas = canvasRef.current;
-      if (!canvas) return;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-
-      const render = renderRef.current;
-      const now = performance.now();
-      const dt = clamp((now - (render.lastFrameAt || now)) / 1000, 0, 0.045);
-      render.lastFrameAt = now;
-      render.fps = Math.round(1 / Math.max(dt, 0.0001));
-
-      const w = window.innerWidth;
-      const h = window.innerHeight;
-      ctx.clearRect(0, 0, w, h);
-
-      // Dark Theme Background
-      ctx.fillStyle = "#0f172a";
-      ctx.fillRect(0, 0, w, h);
-
-      const prevSnap = render.prevSnapshot;
-      const currSnap = render.currSnapshot;
-
-      const alpha = currSnap
-        ? clamp((performance.now() - render.lastSnapshotRecvAt) / SNAPSHOT_MS, 0, 1)
-        : 1;
-
-      let players = new Map<string, NetPlayer>();
-      let cells: NetCell[] = [];
-      let pellets: NetPellet[] = render.fallbackPellets;
-      let viruses: NetVirus[] = [];
-      let powerups: NetPowerUp[] = [];
-      let obstacles: NetObstacle[] = [];
-
-      if (currSnap) {
-        players = new Map(currSnap.players.map((p) => [p.id, p]));
-        const prevCells = new Map((prevSnap?.cells ?? []).map((c) => [c.id, c]));
-
-        cells = currSnap.cells.map((c: any) => {
-          const prev = prevCells.get(c.id);
-          if (!prev) return c;
-          return {
-            ...c,
-            x: lerp(prev.x, c.x, alpha),
-            y: lerp(prev.y, c.y, alpha),
-            mass: lerp(prev.mass, c.mass, alpha),
-          };
-        });
-
-        pellets = currSnap.pellets;
-        viruses = currSnap.viruses;
-        powerups = currSnap.powerups;
-        obstacles = currSnap.obstacles;
-      }
-
-      const localId = serverRef.current.playerId;
-      const myCells = cells.filter((c) => c.ownerId === localId);
-      const center = centroid(myCells);
-      const totalMass = myCells.reduce((sum, c) => sum + c.mass, 0);
-      const desiredZoom = clamp(1.5 / Math.pow(Math.max(totalMass, 60) / 60, 0.22), 0.18, 1.2);
-
-      render.camera.x += (center.x - render.camera.x) * dt * 6;
-      render.camera.y += (center.y - render.camera.y) * dt * 6;
-      render.camera.zoom += (desiredZoom - render.camera.zoom) * dt * 4;
-
-      const halfWorld = render.worldSize / 2;
-      render.camera.x = clamp(render.camera.x, -halfWorld, halfWorld);
-      render.camera.y = clamp(render.camera.y, -halfWorld, halfWorld);
-
-      const zoom = render.camera.zoom;
-      const left = render.camera.x - w / 2 / zoom;
-      const right = render.camera.x + w / 2 / zoom;
-      const top = render.camera.y - h / 2 / zoom;
-      const bottom = render.camera.y + h / 2 / zoom;
-
-      ctx.save();
-      ctx.translate(w / 2, h / 2);
-      ctx.scale(zoom, zoom);
-      ctx.translate(-render.camera.x, -render.camera.y);
-
-      drawGrid(ctx, left, right, top, bottom);
-      drawBorders(ctx, render.worldSize);
-
-      for (const pellet of pellets) {
-        const r = cellRadius(pellet.mass);
-        ctx.fillStyle = pellet.color;
-        ctx.beginPath();
-        ctx.arc(pellet.x, pellet.y, r, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      for (const virus of viruses) {
-        drawVirus(ctx, virus, zoom);
-      }
-
-      for (const pw of powerups) {
-        drawPowerUp(ctx, pw, zoom);
-      }
-
-      for (const obs of obstacles) {
-        drawObstacle(ctx, obs, zoom);
-      }
-
-      const sortedCells = [...cells].sort((a, b) => a.mass - b.mass);
-      for (const cell of sortedCells) {
-        const owner = players.get(cell.ownerId);
-        if (!owner) continue;
-        drawCell(ctx, cell, owner, zoom);
-      }
-
-      ctx.restore();
-
-      if (currSnap && now - hudUpdatedAt > 120) {
-        const ranking = currSnap.leaderboard.map((entry: any) => ({
-          name: entry.name,
-          mass: entry.mass,
-          you: entry.id === localId,
-        }));
-
-        setHud({
-          fps: render.fps,
-          ping: render.ping,
-          connected: render.connected,
-          playerMass: totalMass,
-          playerAlive: myCells.length > 0,
-          leaderboard: ranking,
-        });
-        hudUpdatedAt = now;
-      }
-    };
-
-    const loop = () => {
-      draw();
-      rafId = requestAnimationFrame(loop);
-    };
-
-    rafId = requestAnimationFrame(loop);
-    return () => cancelAnimationFrame(rafId);
-  }, []);
-
-  useEffect(() => {
-    const inputTimer = setInterval(() => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-
-      const render = renderRef.current;
-      const camera = render.camera;
-      const mouse = render.mouseScreen;
-      const target = {
-        x: camera.x + (mouse.x - window.innerWidth / 2) / camera.zoom,
-        y: camera.y + (mouse.y - window.innerHeight / 2) / camera.zoom,
-      };
-
-      ws.send(
-        JSON.stringify({
-          type: "input",
-          target,
-          split: inputRef.current.splitPressed,
-          eject: inputRef.current.ejectPressed,
-        }),
-      );
-
-      inputRef.current.splitPressed = false;
-      inputRef.current.ejectPressed = false;
-    }, 33);
-
-    const pingTimer = setInterval(() => {
-      const ws = wsRef.current;
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      ws.send(JSON.stringify({ type: "ping", t: Date.now() }));
-    }, 2000);
-
-    return () => {
-      clearInterval(inputTimer);
-      clearInterval(pingTimer);
-    };
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
-
-  const connect = (name: string, roomId: string) => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-
-    const ws = new WebSocket(wsUrl());
-    wsRef.current = ws;
-
-    ws.onopen = () => {
-      renderRef.current.connected = true;
-      ws.send(
-        JSON.stringify({
-          type: "join",
-          name: name.trim() || "Blob",
-          roomId: roomId.trim() || "main",
-          color: localColor,
-          skin: selectedSkin,
-          gameMode: gameMode,
-        }),
-      );
-    };
-
-    ws.onmessage = (event) => {
-      const msg = JSON.parse(event.data as string);
-
-      if (msg.type === "welcome") {
-        serverRef.current.playerId = msg.playerId;
-        serverRef.current.roomId = msg.roomId;
-        setJoinedRoom(msg.roomId);
-        renderRef.current.worldSize = Number(msg.worldSize || WORLD_SIZE_DEFAULT);
-        return;
-      }
-
-      if (msg.type === "snapshot") {
-        const snapshot = msg as NetSnapshot;
-        const render = renderRef.current;
-        render.prevSnapshot = render.currSnapshot;
-        render.currSnapshot = snapshot;
-        render.lastSnapshotRecvAt = performance.now();
-        return;
-      }
-
-      if (msg.type === "dead") {
-        setHud((prev: any) => ({ ...prev, playerAlive: false }));
-        return;
-      }
-
-      if (msg.type === "pong" && Number.isFinite(msg.t)) {
-        renderRef.current.ping = Math.max(0, Date.now() - msg.t);
-      }
-    };
-
-    ws.onclose = () => {
-      renderRef.current.connected = false;
-      setHud((prev: any) => ({ ...prev, connected: false }));
-    };
-
-    ws.onerror = () => {
-      renderRef.current.connected = false;
-      setHud((prev: any) => ({ ...prev, connected: false }));
-    };
+  ws.onclose = () => {
+    renderRef.current.connected = false;
+    setHud((prev: any) => ({ ...prev, connected: false }));
   };
 
-  const canShowMenu = !started || !hud.connected || !hud.playerAlive;
-  const isDead = started && hud.connected && !hud.playerAlive;
+  ws.onerror = () => {
+    renderRef.current.connected = false;
+    setHud((prev: any) => ({ ...prev, connected: false }));
+  };
+};
 
-  useEffect(() => {
-    if (typeof window !== "undefined" && (window as any).adsbygoogle && canShowMenu) {
-      try {
-        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
-      } catch (e) {
-        // Silently fail if ad already filled or blocked
-      }
+const canShowMenu = !started || !hud.connected || !hud.playerAlive;
+const isDead = started && hud.connected && !hud.playerAlive;
+
+useEffect(() => {
+  if (typeof window !== "undefined" && (window as any).adsbygoogle && canShowMenu) {
+    try {
+      ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
+    } catch (e) {
+      // Silently fail if ad already filled or blocked
     }
-  }, [canShowMenu]);
+  }
+}, [canShowMenu]);
 
-  const onPlay = (e?: FormEvent) => {
-    if (e) e.preventDefault();
-    setStarted(true);
+const onPlay = (e?: FormEvent) => {
+  if (e) e.preventDefault();
+  setStarted(true);
+  connect(nameInput, roomInput);
+  if (typeof window !== "undefined") {
+    window.history.pushState({ inGame: true }, "", `/${gameMode}`);
+  }
+};
+
+const onRespawn = () => {
+  const ws = wsRef.current;
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
     connect(nameInput, roomInput);
-    if (typeof window !== "undefined") {
-      window.history.pushState({ inGame: true }, "", `/${gameMode}`);
-    }
-  };
+    return;
+  }
+  ws.send(JSON.stringify({ type: "respawn" }));
+};
 
-  const onRespawn = () => {
-    const ws = wsRef.current;
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      connect(nameInput, roomInput);
-      return;
-    }
-    ws.send(JSON.stringify({ type: "respawn" }));
-  };
+return (
+  <main id="app">
+    <canvas ref={canvasRef} id="gameCanvas" />
 
-  return (
-    <main id="app">
-      <canvas ref={canvasRef} id="gameCanvas" />
-
-      <div id="hud">
-        <div className="score-display">
-          Mass: <span id="scoreValue">{Math.round(hud.playerMass)}</span>
-        </div>
-
-        {started && !canShowMenu && (
-          <button id="hamburgerMenuBtn" className="hamburger-btn" onClick={() => setIsPaused(true)}>
-            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="3" y1="12" x2="21" y2="12"></line>
-              <line x1="3" y1="6" x2="21" y2="6"></line>
-              <line x1="3" y1="18" x2="21" y2="18"></line>
-            </svg>
-          </button>
-        )}
+    <div id="hud">
+      <div className="score-display">
+        Mass: <span id="scoreValue">{Math.round(hud.playerMass)}</span>
       </div>
 
-      {canShowMenu && !isDead && (
-        <div id="menu">
-          {/* Global Leaderboards Sidebar */}
-          <div id="globalLeaderboards" className="global-leaderboards">
-            <div className="lb-section">
-              <h3>🏆 Top Mass</h3>
-              <div id="massLeaderboard" className="lb-list">
-                {dbLeaderboards.mass.map((p, i) => (
-                  <div key={i} className="lb-item">
-                    <span className="name">{i + 1}. {p.username}</span>
-                    <span className="value">{Math.round(p.max_mass)}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="lb-section">
-              <h3>⚔️ Top Kills</h3>
-              <div id="killLeaderboard" className="lb-list">
-                {dbLeaderboards.kill.map((p, i) => (
-                  <div key={i} className="lb-item">
-                    <span className="name">{i + 1}. {p.username}</span>
-                    <span className="value">{p.kills || 0}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
+      {started && !canShowMenu && (
+        <button id="hamburgerMenuBtn" className="hamburger-btn" onClick={() => setIsPaused(true)}>
+          <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="3" y1="12" x2="21" y2="12"></line>
+            <line x1="3" y1="6" x2="21" y2="6"></line>
+            <line x1="3" y1="18" x2="21" y2="18"></line>
+          </svg>
+        </button>
+      )}
+    </div>
 
-          {/* Release List Sidebar */}
-          <div id="releaseList" className="release-list">
-            <div className="lb-section">
-              <h3>🚀 Latest Releases</h3>
-              <div className="lb-list">
-                <div className="release-item">
-                  <span className="release-date">v1.16.0 - Menu Update</span>
-                  <p>Added SPA routing (/ffa, /teams) and in-game pause menu with active state saving.</p>
+    {canShowMenu && !isDead && (
+      <div id="menu">
+        {/* Global Leaderboards Sidebar */}
+        <div id="globalLeaderboards" className="global-leaderboards">
+          <div className="lb-section">
+            <h3>🏆 Top Mass</h3>
+            <div id="massLeaderboard" className="lb-list">
+              {dbLeaderboards.mass.map((p, i) => (
+                <div key={i} className="lb-item">
+                  <span className="name">{i + 1}. {p.username}</span>
+                  <span className="value">{Math.round(p.max_mass)}</span>
                 </div>
-                <div className="release-item">
-                  <span className="release-date">v1.15.0 - Map Expansion</span>
-                  <p>Map doubled in size! Extra Large Viruses and 3x faster food generation added.</p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="menu-card">
-            <h1>BLOBIO</h1>
-            {!currentUser ? (
-              <div id="authSection">
-                <button className="solana-btn" onClick={handleLogin}>Connect Solana Wallet</button>
-                <p className="auth-hint">Or play as guest below</p>
-              </div>
-            ) : (
-              <div id="profileSection">
-                <button className="solana-btn" onClick={() => setShowProfile(true)} style={{ background: 'linear-gradient(90deg, #ec4899, #8b5cf6)', color: 'white' }}>My Profile</button>
-              </div>
-            )}
-
-            <input
-              type="text"
-              id="playerName"
-              placeholder="Guest"
-              maxLength={15}
-              value={nameInput}
-              onChange={(e) => setNameInput(e.target.value)}
-            />
-
-            <h4>Game Mode</h4>
-            <div className="mode-settings">
-              <div className={`mode-option ${gameMode === 'ffa' ? 'active' : ''}`} onClick={() => setGameMode('ffa')}>FFA</div>
-              <div className={`mode-option ${gameMode === 'team' ? 'active' : ''}`} onClick={() => setGameMode('team')}>Team</div>
-            </div>
-
-            <h4>Skin</h4>
-            <div className="skin-options">
-              {freeSkins.map(skin => (
-                <div
-                  key={skin.id}
-                  className={`skin-option ${selectedSkin === skin.id ? 'active' : ''}`}
-                  onClick={() => setSelectedSkin(skin.id)}
-                  style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}
-                ></div>
               ))}
             </div>
-
-            <button className="solana-btn" onClick={() => setShowStore(true)} style={{ background: '#eab308', color: '#fff', marginTop: 10 }}>Open Store</button>
-            <button className="play-btn" onClick={() => onPlay()}>Play</button>
-
-            <div className="controls-hint">
-              Desktop: Mouse to move, Space to Split, E to Eject<br />
-              Mobile: Touch to move
-            </div>
-
-            <div className="ad-banner-container">
-              <ins className="adsbygoogle" style={{ display: 'block' }} data-ad-client="ca-pub-8049952818757963" data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
-              <script>
-                {`(adsbygoogle = window.adsbygoogle || []).push({});`}
-              </script>
-            </div>
           </div>
-        </div>
-      )}
-
-      {isDead && (
-        <div id="deathPopup" className="death-popup">
-          <div className="popup-card">
-            <h2>DEFEATED</h2>
-            <div className="death-stats">
-              <p>Final Mass: {Math.round(hud.playerMass)}</p>
-            </div>
-            <div className="popup-actions">
-              <button className="play-btn" onClick={onRespawn}>RESTART</button>
-              <button className="solana-btn" style={{ background: '#2563eb' }} onClick={() => setStarted(false)}>QUIT</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {isPaused && (
-        <div id="pauseModal" className="pause-modal">
-          <div className="popup-card">
-            <h2>Game Paused</h2>
-            <div className="popup-actions">
-              <button className="play-btn" onClick={() => setIsPaused(false)}>Resume Game</button>
-              <button className="solana-btn danger" onClick={() => { setIsPaused(false); setStarted(false); wsRef.current?.close(); }}>Leave Game</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showStore && (
-        <div id="storeModal" className="store-modal">
-          <div className="store-card">
-            <div className="store-header">
-              <h2>Skins Store</h2>
-              <button className="close-btn" onClick={() => setShowStore(false)}>&times;</button>
-            </div>
-            <div className="store-tabs">
-              <button className={`store-tab ${activeStoreTab === 'premium' ? 'active' : ''}`} onClick={() => setActiveStoreTab('premium')}>Premium</button>
-              <button className={`store-tab ${activeStoreTab === 'free' ? 'active' : ''}`} onClick={() => setActiveStoreTab('free')}>Free</button>
-            </div>
-            <div className="store-grid">
-              {(activeStoreTab === 'premium' ? premiumSkins : freeSkins).map(skin => {
-                const isOwned = (currentUser?.owned_skins || freeSkins.map(s => s.id)).includes(skin.id);
-                const isEquipped = selectedSkin === skin.id;
-                return (
-                  <div key={skin.id} className="skin-card">
-                    <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
-                    <div className="skin-name">{skin.name}</div>
-                    {isEquipped ? (
-                      <button className="skin-action-btn btn-equipped">Equipped</button>
-                    ) : isOwned ? (
-                      <button className="skin-action-btn btn-equip" onClick={() => setSelectedSkin(skin.id)}>Equip</button>
-                    ) : (
-                      <button className="skin-action-btn btn-buy" onClick={() => handleBuySkin(skin.id)}>Buy (0.1 SOL)</button>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showProfile && currentUser && (
-        <div id="profileModal" className="profile-modal">
-          <div className="profile-layout">
-            <div className="profile-header-card">
-              <div className="profile-avatar" id="profileAvatar" style={{ backgroundImage: selectedSkin !== 'default' ? `url(/skins/${selectedSkin}.png)` : 'none', backgroundSize: 'cover' }}></div>
-              <div className="profile-title">
-                <div className="profile-tags">
-                  <span className="tag verified">Verified Wallet</span>
-                  <span className="tag premium">BLOBIO Player</span>
+          <div className="lb-section">
+            <h3>⚔️ Top Kills</h3>
+            <div id="killLeaderboard" className="lb-list">
+              {dbLeaderboards.kill.map((p, i) => (
+                <div key={i} className="lb-item">
+                  <span className="name">{i + 1}. {p.username}</span>
+                  <span className="value">{p.kills || 0}</span>
                 </div>
-                <h2>{currentUser.username}</h2>
-                <p className="wallet-hash">{currentUser.wallet_address.substring(0, 5)}...{currentUser.wallet_address.substring(currentUser.wallet_address.length - 5)}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+
+        {/* Release List Sidebar */}
+        <div id="releaseList" className="release-list">
+          <div className="lb-section">
+            <h3>🚀 Latest Releases</h3>
+            <div className="lb-list">
+              <div className="release-item">
+                <span className="release-date">v1.16.0 - Menu Update</span>
+                <p>Added SPA routing (/ffa, /teams) and in-game pause menu with active state saving.</p>
               </div>
-              <button className="close-btn" onClick={() => setShowProfile(false)}>&times;</button>
-
-              <div className="profile-stats-grid">
-                <div className="stat-box"><h3>{currentUser.wins}</h3><p>WINS</p></div>
-                <div className="stat-box"><h3>{currentUser.losses}</h3><p>LOSSES</p></div>
-                <div className="stat-box"><h3>{Math.round(currentUser.max_mass)}</h3><p>MAX MASS</p></div>
-                <div className="stat-box"><h3>{currentUser.kills}</h3><p>KILLS</p></div>
-              </div>
-            </div>
-
-            <div className="profile-body-grid">
-              <div className="profile-settings-card">
-                <h3>Account Settings</h3>
-                <div className="input-group">
-                  <label>DISPLAY NAME</label>
-                  <input type="text" value={editProfileData.username} onChange={e => setEditProfileData({ ...editProfileData, username: e.target.value })} />
-                </div>
-                <div className="input-group">
-                  <label>BIO</label>
-                  <textarea rows={4} value={editProfileData.bio} onChange={e => setEditProfileData({ ...editProfileData, bio: e.target.value })}></textarea>
-                </div>
-                <button className="save-btn" onClick={saveProfile}>Synchronize Changes</button>
-              </div>
-              <div className="profile-inventory-card">
-                <div className="inventory-header">
-                  <h3># My Skins</h3>
-                </div>
-                <div className="inventory-grid">
-                  {(currentUser.owned_skins || freeSkins.map(s => s.id)).map(skinId => {
-                    const skin = [...premiumSkins, ...freeSkins].find(s => s.id === skinId);
-                    if (!skin) return null;
-                    return (
-                      <div key={skinId} className="skin-card">
-                        <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
-                        <h4>{skin.name}</h4>
-                        <button className={`solana-btn ${selectedSkin === skinId ? 'btn-equipped' : 'btn-equip'}`} onClick={() => setSelectedSkin(skinId)}>{selectedSkin === skinId ? 'Equipped' : 'Equip'}</button>
-                      </div>
-                    );
-                  })}
-                </div>
+              <div className="release-item">
+                <span className="release-date">v1.15.0 - Map Expansion</span>
+                <p>Map doubled in size! Extra Large Viruses and 3x faster food generation added.</p>
               </div>
             </div>
           </div>
         </div>
-      )}
-    </main>
-  );
+
+        <div className="menu-card">
+          <h1>BLOBIO</h1>
+          {!currentUser ? (
+            <div id="authSection">
+              <button className="solana-btn" onClick={handleLogin}>Connect Solana Wallet</button>
+              <p className="auth-hint">Or play as guest below</p>
+            </div>
+          ) : (
+            <div id="profileSection">
+              <button className="solana-btn" onClick={() => setShowProfile(true)} style={{ background: 'linear-gradient(90deg, #ec4899, #8b5cf6)', color: 'white' }}>My Profile</button>
+            </div>
+          )}
+
+          <input
+            type="text"
+            id="playerName"
+            placeholder="Guest"
+            maxLength={15}
+            value={nameInput}
+            onChange={(e) => setNameInput(e.target.value)}
+          />
+
+          <h4>Game Mode</h4>
+          <div className="mode-settings">
+            <div className={`mode-option ${gameMode === 'ffa' ? 'active' : ''}`} onClick={() => setGameMode('ffa')}>FFA</div>
+            <div className={`mode-option ${gameMode === 'team' ? 'active' : ''}`} onClick={() => setGameMode('team')}>Team</div>
+          </div>
+
+          <h4>Skin</h4>
+          <div className="skin-options">
+            {freeSkins.map(skin => (
+              <div
+                key={skin.id}
+                className={`skin-option ${selectedSkin === skin.id ? 'active' : ''}`}
+                onClick={() => setSelectedSkin(skin.id)}
+                style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}
+              ></div>
+            ))}
+          </div>
+
+          <button className="solana-btn" onClick={() => setShowStore(true)} style={{ background: '#eab308', color: '#fff', marginTop: 10 }}>Open Store</button>
+          <button className="play-btn" onClick={() => onPlay()}>Play</button>
+
+          <div className="controls-hint">
+            Desktop: Mouse to move, Space to Split, E to Eject<br />
+            Mobile: Touch to move
+          </div>
+
+          <div className="ad-banner-container">
+            <ins className="adsbygoogle" style={{ display: 'block' }} data-ad-client="ca-pub-8049952818757963" data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
+            <script>
+              {`(adsbygoogle = window.adsbygoogle || []).push({});`}
+            </script>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {isDead && (
+      <div id="deathPopup" className="death-popup">
+        <div className="popup-card">
+          <h2>DEFEATED</h2>
+          <div className="death-stats">
+            <p>Final Mass: {Math.round(hud.playerMass)}</p>
+          </div>
+          <div className="popup-actions">
+            <button className="play-btn" onClick={onRespawn}>RESTART</button>
+            <button className="solana-btn" style={{ background: '#2563eb' }} onClick={() => setStarted(false)}>QUIT</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {isPaused && (
+      <div id="pauseModal" className="pause-modal">
+        <div className="popup-card">
+          <h2>Game Paused</h2>
+          <div className="popup-actions">
+            <button className="play-btn" onClick={() => setIsPaused(false)}>Resume Game</button>
+            <button className="solana-btn danger" onClick={() => { setIsPaused(false); setStarted(false); wsRef.current?.close(); }}>Leave Game</button>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showStore && (
+      <div id="storeModal" className="store-modal">
+        <div className="store-card">
+          <div className="store-header">
+            <h2>Skins Store</h2>
+            <button className="close-btn" onClick={() => setShowStore(false)}>&times;</button>
+          </div>
+          <div className="store-tabs">
+            <button className={`store-tab ${activeStoreTab === 'premium' ? 'active' : ''}`} onClick={() => setActiveStoreTab('premium')}>Premium</button>
+            <button className={`store-tab ${activeStoreTab === 'free' ? 'active' : ''}`} onClick={() => setActiveStoreTab('free')}>Free</button>
+          </div>
+          <div className="store-grid">
+            {(activeStoreTab === 'premium' ? premiumSkins : freeSkins).map(skin => {
+              const isOwned = (currentUser?.owned_skins || freeSkins.map(s => s.id)).includes(skin.id);
+              const isEquipped = selectedSkin === skin.id;
+              return (
+                <div key={skin.id} className="skin-card">
+                  <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
+                  <div className="skin-name">{skin.name}</div>
+                  {isEquipped ? (
+                    <button className="skin-action-btn btn-equipped">Equipped</button>
+                  ) : isOwned ? (
+                    <button className="skin-action-btn btn-equip" onClick={() => setSelectedSkin(skin.id)}>Equip</button>
+                  ) : (
+                    <button className="skin-action-btn btn-buy" onClick={() => handleBuySkin(skin.id)}>Buy (0.1 SOL)</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    )}
+
+    {showProfile && currentUser && (
+      <div id="profileModal" className="profile-modal">
+        <div className="profile-layout">
+          <div className="profile-header-card">
+            <div className="profile-avatar" id="profileAvatar" style={{ backgroundImage: selectedSkin !== 'default' ? `url(/skins/${selectedSkin}.png)` : 'none', backgroundSize: 'cover' }}></div>
+            <div className="profile-title">
+              <div className="profile-tags">
+                <span className="tag verified">Verified Wallet</span>
+                <span className="tag premium">BLOBIO Player</span>
+              </div>
+              <h2>{currentUser.username}</h2>
+              <p className="wallet-hash">{currentUser.wallet_address.substring(0, 5)}...{currentUser.wallet_address.substring(currentUser.wallet_address.length - 5)}</p>
+            </div>
+            <button className="close-btn" onClick={() => setShowProfile(false)}>&times;</button>
+
+            <div className="profile-stats-grid">
+              <div className="stat-box"><h3>{currentUser.wins}</h3><p>WINS</p></div>
+              <div className="stat-box"><h3>{currentUser.losses}</h3><p>LOSSES</p></div>
+              <div className="stat-box"><h3>{Math.round(currentUser.max_mass)}</h3><p>MAX MASS</p></div>
+              <div className="stat-box"><h3>{currentUser.kills}</h3><p>KILLS</p></div>
+            </div>
+          </div>
+
+          <div className="profile-body-grid">
+            <div className="profile-settings-card">
+              <h3>Account Settings</h3>
+              <div className="input-group">
+                <label>DISPLAY NAME</label>
+                <input type="text" value={editProfileData.username} onChange={e => setEditProfileData({ ...editProfileData, username: e.target.value })} />
+              </div>
+              <div className="input-group">
+                <label>BIO</label>
+                <textarea rows={4} value={editProfileData.bio} onChange={e => setEditProfileData({ ...editProfileData, bio: e.target.value })}></textarea>
+              </div>
+              <button className="save-btn" onClick={saveProfile}>Synchronize Changes</button>
+            </div>
+            <div className="profile-inventory-card">
+              <div className="inventory-header">
+                <h3># My Skins</h3>
+              </div>
+              <div className="inventory-grid">
+                {(currentUser.owned_skins || freeSkins.map(s => s.id)).map(skinId => {
+                  const skin = [...premiumSkins, ...freeSkins].find(s => s.id === skinId);
+                  if (!skin) return null;
+                  return (
+                    <div key={skinId} className="skin-card">
+                      <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
+                      <h4>{skin.name}</h4>
+                      <button className={`solana-btn ${selectedSkin === skinId ? 'btn-equipped' : 'btn-equip'}`} onClick={() => setSelectedSkin(skinId)}>{selectedSkin === skinId ? 'Equipped' : 'Equip'}</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+  </main>
+);
 }
 
 function drawGrid(

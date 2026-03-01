@@ -307,7 +307,7 @@ export default function Page() {
         e.preventDefault();
         inputRef.current.splitPressed = true;
       }
-      if (e.key.toLowerCase() === "w") {
+      if (e.key.toLowerCase() === "e") {
         inputRef.current.ejectPressed = true;
       }
     };
@@ -339,7 +339,9 @@ export default function Page() {
       const w = window.innerWidth;
       const h = window.innerHeight;
       ctx.clearRect(0, 0, w, h);
-      ctx.fillStyle = "#f6f8fc";
+
+      // Dark Theme Background
+      ctx.fillStyle = "#0f172a";
       ctx.fillRect(0, 0, w, h);
 
       const prevSnap = render.prevSnapshot;
@@ -571,10 +573,26 @@ export default function Page() {
     };
   };
 
-  const onPlay = (e: FormEvent) => {
-    e.preventDefault();
+  const canShowMenu = !started || !hud.connected || !hud.playerAlive;
+  const isDead = started && hud.connected && !hud.playerAlive;
+
+  useEffect(() => {
+    if (typeof window !== "undefined" && (window as any).adsbygoogle && canShowMenu) {
+      try {
+        ((window as any).adsbygoogle = (window as any).adsbygoogle || []).push({});
+      } catch (e) {
+        // Silently fail if ad already filled or blocked
+      }
+    }
+  }, [canShowMenu]);
+
+  const onPlay = (e?: FormEvent) => {
+    if (e) e.preventDefault();
     setStarted(true);
     connect(nameInput, roomInput);
+    if (typeof window !== "undefined") {
+      window.history.pushState({ inGame: true }, "", `/${gameMode}`);
+    }
   };
 
   const onRespawn = () => {
@@ -586,83 +604,181 @@ export default function Page() {
     ws.send(JSON.stringify({ type: "respawn" }));
   };
 
-  const canShowMenu = !started || !hud.connected || !hud.playerAlive;
-
   return (
-    <main className="agar-page">
-      <canvas ref={canvasRef} className="game-canvas" />
+    <main id="app">
+      <canvas ref={canvasRef} id="gameCanvas" />
 
-      <section className="hud top-left">
-        <h1>BLOBHAUS</h1>
-        <p>Mass: {Math.round(hud.playerMass)}</p>
-        <p>FPS: {hud.fps}</p>
-        <p>Ping: {hud.ping}ms</p>
-      </section>
+      <div id="hud">
+        <div className="score-display">
+          Mass: <span id="scoreValue">{Math.round(hud.playerMass)}</span>
+        </div>
 
-      <section className="hud top-right">
-        <h2>Leaderboard</h2>
-        <ol>
-          {hud.leaderboard.map((entry: any) => (
-            <li key={`${entry.name}_${entry.mass}`} className={entry.you ? "you" : ""}>
-              {entry.name} - {Math.round(entry.mass)}
-            </li>
-          ))}
-        </ol>
-      </section>
+        {started && !canShowMenu && (
+          <button id="hamburgerMenuBtn" className="hamburger-btn" onClick={() => setIsPaused(true)}>
+            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" strokeWidth="2" fill="none" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="3" y1="12" x2="21" y2="12"></line>
+              <line x1="3" y1="6" x2="21" y2="6"></line>
+              <line x1="3" y1="18" x2="21" y2="18"></line>
+            </svg>
+          </button>
+        )}
+      </div>
 
-      <section className="hud bottom-left controls">
-        <p>Mouse: Move</p>
-        <p>Space: Split</p>
-        <p>W: Eject mass</p>
-        <p>Room: {joinedRoom || roomInput}</p>
-        {!started && <button onClick={() => setShowStore(true)} style={{ marginTop: 10, padding: 8, background: '#3b82f6', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer' }}>Open Store</button>}
-      </section>
+      {canShowMenu && !isDead && (
+        <div id="menu">
+          {/* Global Leaderboards Sidebar */}
+          <div id="globalLeaderboards" className="global-leaderboards">
+            <div className="lb-section">
+              <h3>🏆 Top Mass</h3>
+              <div id="massLeaderboard" className="lb-list">
+                {dbLeaderboards.mass.map((p, i) => (
+                  <div key={i} className="lb-item">
+                    <span className="name">{i + 1}. {p.username}</span>
+                    <span className="value">{Math.round(p.max_mass)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="lb-section">
+              <h3>⚔️ Top Kills</h3>
+              <div id="killLeaderboard" className="lb-list">
+                {dbLeaderboards.kill.map((p, i) => (
+                  <div key={i} className="lb-item">
+                    <span className="name">{i + 1}. {p.username}</span>
+                    <span className="value">{p.kills || 0}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
 
-      {started && !canShowMenu && (
-        <button
-          onClick={() => setIsPaused(true)}
-          style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 50, padding: '10px 20px', borderRadius: 20, background: 'rgba(255,255,255,0.8)', border: '1px solid #ccc', cursor: 'pointer' }}
-        >
-          ⏸ Pause
-        </button>
+          {/* Release List Sidebar */}
+          <div id="releaseList" className="release-list">
+            <div className="lb-section">
+              <h3>🚀 Latest Releases</h3>
+              <div className="lb-list">
+                <div className="release-item">
+                  <span className="release-date">v1.16.0 - Menu Update</span>
+                  <p>Added SPA routing (/ffa, /teams) and in-game pause menu with active state saving.</p>
+                </div>
+                <div className="release-item">
+                  <span className="release-date">v1.15.0 - Map Expansion</span>
+                  <p>Map doubled in size! Extra Large Viruses and 3x faster food generation added.</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="menu-card">
+            <h1>BLOBIO</h1>
+            {!currentUser ? (
+              <div id="authSection">
+                <button className="solana-btn" onClick={handleLogin}>Connect Solana Wallet</button>
+                <p className="auth-hint">Or play as guest below</p>
+              </div>
+            ) : (
+              <div id="profileSection">
+                <button className="solana-btn" onClick={() => setShowProfile(true)} style={{ background: 'linear-gradient(90deg, #ec4899, #8b5cf6)', color: 'white' }}>My Profile</button>
+              </div>
+            )}
+
+            <input
+              type="text"
+              id="playerName"
+              placeholder="Guest"
+              maxLength={15}
+              value={nameInput}
+              onChange={(e) => setNameInput(e.target.value)}
+            />
+
+            <h4>Game Mode</h4>
+            <div className="mode-settings">
+              <div className={`mode-option ${gameMode === 'ffa' ? 'active' : ''}`} onClick={() => setGameMode('ffa')}>FFA</div>
+              <div className={`mode-option ${gameMode === 'team' ? 'active' : ''}`} onClick={() => setGameMode('team')}>Team</div>
+            </div>
+
+            <h4>Skin</h4>
+            <div className="skin-options">
+              {freeSkins.map(skin => (
+                <div
+                  key={skin.id}
+                  className={`skin-option ${selectedSkin === skin.id ? 'active' : ''}`}
+                  onClick={() => setSelectedSkin(skin.id)}
+                  style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}
+                ></div>
+              ))}
+            </div>
+
+            <button className="solana-btn" onClick={() => setShowStore(true)} style={{ background: '#eab308', color: '#fff', marginTop: 10 }}>Open Store</button>
+            <button className="play-btn" onClick={() => onPlay()}>Play</button>
+
+            <div className="controls-hint">
+              Desktop: Mouse to move, Space to Split, E to Eject<br />
+              Mobile: Touch to move
+            </div>
+
+            <div className="ad-banner-container">
+              <ins className="adsbygoogle" style={{ display: 'block' }} data-ad-client="ca-pub-8049952818757963" data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
+              <script>
+                {`(adsbygoogle = window.adsbygoogle || []).push({});`}
+              </script>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isDead && (
+        <div id="deathPopup" className="death-popup">
+          <div className="popup-card">
+            <h2>DEFEATED</h2>
+            <div className="death-stats">
+              <p>Final Mass: {Math.round(hud.playerMass)}</p>
+            </div>
+            <div className="popup-actions">
+              <button className="play-btn" onClick={onRespawn}>RESTART</button>
+              <button className="solana-btn" style={{ background: '#2563eb' }} onClick={() => setStarted(false)}>QUIT</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {isPaused && (
-        <div className="overlay" style={{ zIndex: 60 }}>
-          <div className="panel" style={{ textAlign: 'center' }}>
+        <div id="pauseModal" className="pause-modal">
+          <div className="popup-card">
             <h2>Game Paused</h2>
-            <button onClick={() => setIsPaused(false)}>Resume</button>
-            <button onClick={() => { setIsPaused(false); setStarted(false); wsRef.current?.close(); }} style={{ background: '#ef4444' }}>Leave Room</button>
+            <div className="popup-actions">
+              <button className="play-btn" onClick={() => setIsPaused(false)}>Resume Game</button>
+              <button className="solana-btn danger" onClick={() => { setIsPaused(false); setStarted(false); wsRef.current?.close(); }}>Leave Game</button>
+            </div>
           </div>
         </div>
       )}
 
       {showStore && (
-        <div className="overlay" style={{ zIndex: 60 }}>
-          <div className="panel" style={{ width: 600, maxWidth: '90vw' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2>Store & Skins</h2>
-              <button onClick={() => setShowStore(false)} style={{ background: 'transparent', color: '#333', padding: 0 }}>✖</button>
+        <div id="storeModal" className="store-modal">
+          <div className="store-card">
+            <div className="store-header">
+              <h2>Skins Store</h2>
+              <button className="close-btn" onClick={() => setShowStore(false)}>&times;</button>
             </div>
-            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-              <button onClick={() => setActiveStoreTab('premium')} style={{ flex: 1, background: activeStoreTab === 'premium' ? '#3b82f6' : '#e2e8f0', color: activeStoreTab === 'premium' ? '#fff' : '#333' }}>Premium (SOL)</button>
-              <button onClick={() => setActiveStoreTab('free')} style={{ flex: 1, background: activeStoreTab === 'free' ? '#3b82f6' : '#e2e8f0', color: activeStoreTab === 'free' ? '#fff' : '#333' }}>Free</button>
+            <div className="store-tabs">
+              <button className={`store-tab ${activeStoreTab === 'premium' ? 'active' : ''}`} onClick={() => setActiveStoreTab('premium')}>Premium</button>
+              <button className={`store-tab ${activeStoreTab === 'free' ? 'active' : ''}`} onClick={() => setActiveStoreTab('free')}>Free</button>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, maxHeight: 400, overflowY: 'auto' }}>
+            <div className="store-grid">
               {(activeStoreTab === 'premium' ? premiumSkins : freeSkins).map(skin => {
-                const defaultOwned = freeSkins.map(s => s.id);
-                const isOwned = (currentUser?.owned_skins || defaultOwned).includes(skin.id);
+                const isOwned = (currentUser?.owned_skins || freeSkins.map(s => s.id)).includes(skin.id);
                 const isEquipped = selectedSkin === skin.id;
                 return (
-                  <div key={skin.id} style={{ border: '1px solid #ccc', borderRadius: 8, padding: 10, textAlign: 'center' }}>
-                    <div style={{ width: 60, height: 60, margin: '0 auto 10px', borderRadius: '50%', background: skin.type === 'color' ? (skin as any).value : skin.type === 'gradient' ? (skin as any).value : `url(/skins/${skin.id}.png) center/cover` }}></div>
-                    <p style={{ fontSize: 14, fontWeight: 'bold' }}>{skin.name}</p>
+                  <div key={skin.id} className="skin-card">
+                    <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
+                    <div className="skin-name">{skin.name}</div>
                     {isEquipped ? (
-                      <button disabled style={{ width: '100%', background: '#22c55e', marginTop: 10 }}>Equipped</button>
+                      <button className="skin-action-btn btn-equipped">Equipped</button>
                     ) : isOwned ? (
-                      <button onClick={() => setSelectedSkin(skin.id)} style={{ width: '100%', background: '#3b82f6', marginTop: 10 }}>Equip</button>
+                      <button className="skin-action-btn btn-equip" onClick={() => setSelectedSkin(skin.id)}>Equip</button>
                     ) : (
-                      <button onClick={() => handleBuySkin(skin.id)} style={{ width: '100%', background: '#f59e0b', marginTop: 10 }}>Buy (0.1 SOL)</button>
+                      <button className="skin-action-btn btn-buy" onClick={() => handleBuySkin(skin.id)}>Buy (0.1 SOL)</button>
                     )}
                   </div>
                 );
@@ -673,94 +789,62 @@ export default function Page() {
       )}
 
       {showProfile && currentUser && (
-        <div className="overlay" style={{ zIndex: 60 }}>
-          <div className="panel">
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h2>Profile</h2>
-              <button onClick={() => setShowProfile(false)} style={{ background: 'transparent', color: '#333', padding: 0 }}>✖</button>
+        <div id="profileModal" className="profile-modal">
+          <div className="profile-layout">
+            <div className="profile-header-card">
+              <div className="profile-avatar" id="profileAvatar" style={{ backgroundImage: selectedSkin !== 'default' ? `url(/skins/${selectedSkin}.png)` : 'none', backgroundSize: 'cover' }}></div>
+              <div className="profile-title">
+                <div className="profile-tags">
+                  <span className="tag verified">Verified Wallet</span>
+                  <span className="tag premium">BLOBIO Player</span>
+                </div>
+                <h2>{currentUser.username}</h2>
+                <p className="wallet-hash">{currentUser.wallet_address.substring(0, 5)}...{currentUser.wallet_address.substring(currentUser.wallet_address.length - 5)}</p>
+              </div>
+              <button className="close-btn" onClick={() => setShowProfile(false)}>&times;</button>
+
+              <div className="profile-stats-grid">
+                <div className="stat-box"><h3>{currentUser.wins}</h3><p>WINS</p></div>
+                <div className="stat-box"><h3>{currentUser.losses}</h3><p>LOSSES</p></div>
+                <div className="stat-box"><h3>{Math.round(currentUser.max_mass)}</h3><p>MAX MASS</p></div>
+                <div className="stat-box"><h3>{currentUser.kills}</h3><p>KILLS</p></div>
+              </div>
             </div>
-            <p>Wallet: {currentUser.wallet_address.substring(0, 8)}...</p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 15, background: '#f1f5f9', padding: 10, borderRadius: 8 }}>
-              <div><b>Wins:</b> {currentUser.wins}</div>
-              <div><b>Losses:</b> {currentUser.losses}</div>
-              <div><b>Kills:</b> {currentUser.kills}</div>
-              <div><b>Max Mass:</b> {Math.round(currentUser.max_mass)}</div>
+
+            <div className="profile-body-grid">
+              <div className="profile-settings-card">
+                <h3>Account Settings</h3>
+                <div className="input-group">
+                  <label>DISPLAY NAME</label>
+                  <input type="text" value={editProfileData.username} onChange={e => setEditProfileData({ ...editProfileData, username: e.target.value })} />
+                </div>
+                <div className="input-group">
+                  <label>BIO</label>
+                  <textarea rows={4} value={editProfileData.bio} onChange={e => setEditProfileData({ ...editProfileData, bio: e.target.value })}></textarea>
+                </div>
+                <button className="save-btn" onClick={saveProfile}>Synchronize Changes</button>
+              </div>
+              <div className="profile-inventory-card">
+                <div className="inventory-header">
+                  <h3># My Skins</h3>
+                </div>
+                <div className="inventory-grid">
+                  {(currentUser.owned_skins || freeSkins.map(s => s.id)).map(skinId => {
+                    const skin = [...premiumSkins, ...freeSkins].find(s => s.id === skinId);
+                    if (!skin) return null;
+                    return (
+                      <div key={skinId} className="skin-card">
+                        <div className="skin-preview" style={skin.type === 'color' ? { background: (skin as any).value } : skin.type === 'gradient' ? { background: (skin as any).value } : { backgroundImage: `url(/skins/${skin.id}.png)`, backgroundSize: 'cover' }}></div>
+                        <h4>{skin.name}</h4>
+                        <button className={`solana-btn ${selectedSkin === skinId ? 'btn-equipped' : 'btn-equip'}`} onClick={() => setSelectedSkin(skinId)}>{selectedSkin === skinId ? 'Equipped' : 'Equip'}</button>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
-            <label>Username <input value={editProfileData.username} onChange={e => setEditProfileData({ ...editProfileData, username: e.target.value })} /></label>
-            <label>Twitter <input value={editProfileData.twitter} onChange={e => setEditProfileData({ ...editProfileData, twitter: e.target.value })} /></label>
-            <button onClick={saveProfile} style={{ marginTop: 10 }}>Save Profile</button>
           </div>
         </div>
-      )}
-
-      {canShowMenu && (
-        <section className="overlay">
-          <form className="panel" onSubmit={onPlay} style={{ width: 600, maxWidth: '95vw', gridTemplateColumns: '1fr 300px' }}>
-            <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <h2 style={{ fontSize: 32, marginBottom: 5 }}>
-                  {!started ? "VAIIYA ARENA" : !hud.connected ? "Disconnected" : "You were eaten"}
-                </h2>
-                <p>Next.js Server-Authoritative Port</p>
-              </div>
-              {!currentUser ? (
-                <button type="button" onClick={handleLogin} style={{ background: '#8b5cf6' }}>Connect Wallet</button>
-              ) : (
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button type="button" onClick={() => setShowProfile(true)} style={{ background: '#64748b' }}>{currentUser.username}</button>
-                  <button type="button" onClick={() => setShowStore(true)} style={{ background: '#f59e0b' }}>Store</button>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
-              <label>
-                Nickname
-                <input
-                  value={nameInput}
-                  onChange={(e) => setNameInput(e.target.value)}
-                  maxLength={20}
-                  placeholder="Nickname"
-                />
-              </label>
-              <label>
-                Room
-                <input
-                  value={roomInput}
-                  onChange={(e) => setRoomInput(e.target.value.replace(/\s+/g, ""))}
-                  maxLength={32}
-                  placeholder="main"
-                />
-              </label>
-              <div>
-                <label style={{ marginBottom: 8, display: 'block' }}>Game Mode</label>
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button type="button" onClick={() => setGameMode('ffa')} style={{ flex: 1, background: gameMode === 'ffa' ? '#3b82f6' : '#e2e8f0', color: gameMode === 'ffa' ? '#fff' : '#333' }}>FFA</button>
-                  <button type="button" onClick={() => setGameMode('team')} style={{ flex: 1, background: gameMode === 'team' ? '#ef4444' : '#e2e8f0', color: gameMode === 'team' ? '#fff' : '#333' }}>Team</button>
-                </div>
-              </div>
-              {!started || !hud.connected ? (
-                <button type="submit" style={{ padding: '16px', fontSize: '1.2rem', marginTop: 10 }}>{started ? "Reconnect" : "Play"}</button>
-              ) : (
-                <button type="button" onClick={onRespawn} style={{ padding: '16px', fontSize: '1.2rem', marginTop: 10 }}>
-                  Respawn
-                </button>
-              )}
-            </div>
-
-            <div style={{ background: '#f8fafc', padding: 15, borderRadius: 12, border: '1px solid #e2e8f0' }}>
-              <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Global Rankings</h3>
-              <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
-                <div style={{ flex: 1 }}>
-                  <h4 style={{ margin: '0 0 5px', fontSize: 13, color: '#64748b' }}>Top Mass</h4>
-                  <div style={{ fontSize: 13 }}>
-                    {dbLeaderboards.mass.map((p, i) => <div key={i} style={{ marginBottom: 4 }}><b>{i + 1}.</b> {p.username} <span style={{ float: 'right' }}>{Math.round(p.max_mass)}</span></div>)}
-                  </div>
-                </div>
-              </div>
-            </div>
-          </form>
-        </section>
       )}
     </main>
   );
@@ -773,7 +857,7 @@ function drawGrid(
   top: number,
   bottom: number,
 ) {
-  ctx.strokeStyle = "rgba(35, 54, 88, 0.08)";
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.05)";
   ctx.lineWidth = 1;
   const step = 200;
 
@@ -794,110 +878,118 @@ function drawGrid(
 
 function drawBorders(ctx: CanvasRenderingContext2D, worldSize: number) {
   const halfWorld = worldSize / 2;
-  ctx.strokeStyle = "#a8b4c8";
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+  ctx.lineWidth = 10;
   ctx.strokeRect(-halfWorld, -halfWorld, worldSize, worldSize);
 }
 
 function drawVirus(ctx: CanvasRenderingContext2D, virus: NetVirus, zoom: number) {
   const r = cellRadius(virus.mass);
-  ctx.fillStyle = "#22c55e";
-  ctx.strokeStyle = "#16a34a";
-  ctx.lineWidth = 3 / zoom;
+  ctx.save();
+  ctx.translate(virus.x, virus.y);
+  ctx.fillStyle = "#33ff33";
+  ctx.strokeStyle = "#11aa11";
+  ctx.lineWidth = 2;
+
   ctx.beginPath();
-  const spikes = 22;
-  for (let i = 0; i <= spikes; i += 1) {
-    const t = (Math.PI * 2 * i) / spikes;
-    const rr = i % 2 === 0 ? r * 1.07 : r * 0.88;
-    const x = virus.x + Math.cos(t) * rr;
-    const y = virus.y + Math.sin(t) * rr;
-    if (i === 0) {
-      ctx.moveTo(x, y);
-    } else {
-      ctx.lineTo(x, y);
-    }
+  for (let i = 0; i < 24; i += 1) {
+    const angle = (i * Math.PI * 2) / 24;
+    const dist = i % 2 === 0 ? r : r * 1.15;
+    ctx.lineTo(Math.cos(angle) * dist, Math.sin(angle) * dist);
   }
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  ctx.restore();
 }
 
-function drawCell(ctx: CanvasRenderingContext2D, cell: NetCell, owner: NetPlayer, zoom: number) {
+function drawCell(
+  ctx: CanvasRenderingContext2D,
+  cell: NetCell,
+  player: NetPlayer,
+  zoom: number,
+) {
   const r = cellRadius(cell.mass);
-
   ctx.save();
-  ctx.beginPath();
-  ctx.arc(cell.x, cell.y, r, 0, Math.PI * 2);
-  ctx.closePath();
-  ctx.clip(); // Clip everything to the blob circle
+  ctx.translate(cell.x, cell.y);
 
-  ctx.fillStyle = owner.color;
-  ctx.fill();
-
-  if (owner.skin && owner.skin !== 'default' && owner.skin !== 'neon' && typeof window !== 'undefined') {
-    // Only fetch if image
-    let img = (window as any)[`__skin_${owner.skin}`];
-    if (!img) {
-      img = new Image();
-      img.src = `/skins/${owner.skin}.png`;
-      (window as any)[`__skin_${owner.skin}`] = img;
-    }
-    if (img.complete && img.naturalHeight !== 0) {
-      ctx.drawImage(img, cell.x - r, cell.y - r, r * 2, r * 2);
-    }
-  } else if (owner.skin === 'neon') {
-    const gradient = ctx.createLinearGradient(cell.x - r, cell.y - r, cell.x + r, cell.y + r);
-    gradient.addColorStop(0, '#3b82f6');
-    gradient.addColorStop(1, '#60a5fa');
-    ctx.fillStyle = gradient;
+  // Skin or Color
+  if (player.skin && player.skin !== 'default') {
+    const img = new Image();
+    img.src = `/skins/${player.skin}.png`;
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.clip();
+    try {
+      ctx.drawImage(img, -r, -r, r * 2, r * 2);
+    } catch (e) { }
+    ctx.restore();
+    ctx.strokeStyle = player.color;
+    ctx.lineWidth = 3;
+    ctx.stroke();
+  } else {
+    ctx.fillStyle = player.color;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
     ctx.fill();
+    ctx.strokeStyle = "rgba(255,255,255,0.2)";
+    ctx.lineWidth = 2;
+    ctx.stroke();
   }
 
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-  ctx.lineWidth = 2 / zoom;
-  ctx.stroke();
+  // Name & Mass
+  if (zoom > 0.4) {
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `${Math.max(12, r / 3)}px bold Inter, sans-serif`;
+    ctx.shadowColor = "rgba(0,0,0,0.5)";
+    ctx.shadowBlur = 4;
+    ctx.fillText(player.name, 0, 0);
+    if (zoom > 0.6) {
+      ctx.font = `${Math.max(10, r / 4.5)}px Inter, sans-serif`;
+      ctx.fillText(Math.round(cell.mass).toString(), 0, r / 2);
+    }
+  }
 
   ctx.restore();
-
-  // Draw name outside of clip mask
-  ctx.fillStyle = "white";
-  ctx.strokeStyle = "black";
-  ctx.lineWidth = 3 / zoom;
-  ctx.font = `bold ${Math.max(12 / zoom, r / 3)}px 'Trebuchet MS', sans-serif`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "middle";
-  ctx.strokeText(owner.name, cell.x, cell.y);
-  ctx.fillText(owner.name, cell.x, cell.y);
 }
 
 function drawPowerUp(ctx: CanvasRenderingContext2D, pw: NetPowerUp, zoom: number) {
-  const r = 20;
+  const r = 25;
+  ctx.save();
+  ctx.translate(pw.x, pw.y);
+
+  // Outer circle
   ctx.beginPath();
-  ctx.arc(pw.x, pw.y, r, 0, Math.PI * 2);
+  ctx.arc(0, 0, r, 0, Math.PI * 2);
 
   if (pw.type === 'SPEED') {
-    ctx.fillStyle = '#0ea5e9'; // Blue shield
+    ctx.fillStyle = '#0ea5e9';
     ctx.fill();
     ctx.strokeStyle = '#bae6fd';
   } else if (pw.type === 'SHIELD') {
-    ctx.fillStyle = '#8b5cf6'; // Purple shield
+    ctx.fillStyle = '#8b5cf6';
     ctx.fill();
     ctx.strokeStyle = '#ddd6fe';
   } else {
-    ctx.fillStyle = '#eab308'; // Yellow Mass
+    ctx.fillStyle = '#eab308';
     ctx.fill();
     ctx.strokeStyle = '#fef08a';
   }
 
-  ctx.lineWidth = 4 / zoom;
+  ctx.lineWidth = 4;
   ctx.stroke();
 
   // Icon
   ctx.fillStyle = 'white';
-  ctx.font = `bold ${14 / zoom}px Arial`;
+  ctx.font = `bold 18px Arial`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillText(pw.type === 'SPEED' ? '⚡' : pw.type === 'SHIELD' ? '🛡️' : 'M', pw.x, pw.y);
+  ctx.fillText(pw.type === 'SPEED' ? '⚡' : pw.type === 'SHIELD' ? '🛡️' : 'M', 0, 0);
+
+  ctx.restore();
 }
 
 function drawObstacle(ctx: CanvasRenderingContext2D, obs: NetObstacle, zoom: number) {
@@ -905,14 +997,14 @@ function drawObstacle(ctx: CanvasRenderingContext2D, obs: NetObstacle, zoom: num
   ctx.translate(obs.x, obs.y);
   ctx.rotate(obs.rotation);
 
-  ctx.fillStyle = obs.color;
+  ctx.fillStyle = obs.color || '#475569';
   ctx.strokeStyle = 'rgba(255,255,255,0.2)';
-  ctx.lineWidth = 3 / zoom;
+  ctx.lineWidth = 3;
 
   ctx.beginPath();
   if (obs.shape === 'RECT') {
     const w = obs.radius * 2;
-    const h = obs.radius * 2; // For now keeping square
+    const h = obs.radius * 2;
     ctx.rect(-w / 2, -h / 2, w, h);
   } else if (obs.shape === 'CIRCLE') {
     ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);

@@ -1,8 +1,26 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { auth } from "./lib/auth";
+import { getUserProfile, createUserProfile, updateUserProfile, initSchema, UserProfile, getTopMassPlayers, getTopKillPlayers, addOwnedSkin } from "./lib/db";
 
 type Vec2 = { x: number; y: number };
+
+const premiumSkins = [
+  { id: 'tiger', name: 'Tiger', type: 'image' },
+  { id: 'skull', name: 'Skull', type: 'image' },
+  { id: 'pumpkin', name: 'Pumpkin', type: 'image' },
+  { id: 'ninja', name: 'Ninja', type: 'image' },
+  { id: 'gorilla', name: 'Gorilla', type: 'image' }
+];
+
+const freeSkins = [
+  { id: 'default', name: 'Default', type: 'color', value: '#3b82f6' },
+  { id: 'neon', name: 'Neon', type: 'gradient', value: 'linear-gradient(45deg, #3b82f6, #60a5fa)' },
+  { id: 'doge', name: 'Doge', type: 'image' },
+  { id: 'bunny', name: 'Bunny', type: 'image' },
+  { id: 'alien_face', name: 'Alien Face', type: 'image' }
+];
 
 type NetCell = {
   id: string;
@@ -27,10 +45,29 @@ type NetVirus = {
   mass: number;
 };
 
+type NetPowerUp = {
+  id: string;
+  x: number;
+  y: number;
+  type: string;
+};
+
+type NetObstacle = {
+  id: string;
+  x: number;
+  y: number;
+  radius: number;
+  shape: string;
+  color: string;
+  rotation: number;
+};
+
 type NetPlayer = {
   id: string;
   name: string;
   color: string;
+  skin: string;
+  team?: string;
   isBot: boolean;
 };
 
@@ -44,10 +81,13 @@ type NetSnapshot = {
   type: "snapshot";
   serverTime: number;
   roomId: string;
+  gameMode: "ffa" | "team";
   players: NetPlayer[];
   cells: NetCell[];
   pellets: NetPellet[];
   viruses: NetVirus[];
+  powerups: NetPowerUp[];
+  obstacles: NetObstacle[];
   leaderboard: NetLeaderboard[];
 };
 
@@ -160,8 +200,24 @@ export default function Page() {
 
   const [nameInput, setNameInput] = useState("Blob");
   const [roomInput, setRoomInput] = useState("main");
+  const [gameMode, setGameMode] = useState<"ffa" | "team">("ffa");
+  const [selectedSkin, setSelectedSkin] = useState("default");
   const [joinedRoom, setJoinedRoom] = useState("");
   const [started, setStarted] = useState(false);
+
+  // Modals & HUD state
+  const [showProfile, setShowProfile] = useState(false);
+  const [showStore, setShowStore] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const [activeStoreTab, setActiveStoreTab] = useState<"premium" | "free">("premium");
+
+  // Auth & Profile state
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
+  const [dbLeaderboards, setDbLeaderboards] = useState({ mass: [] as any[], kill: [] as any[] });
+
+  // Edit Profile internal state
+  const [editProfileData, setEditProfileData] = useState({ username: "", twitter: "", youtube: "", bio: "" });
+
   const [hud, setHud] = useState<HudSnapshot>({
     fps: 60,
     ping: 0,
@@ -172,6 +228,54 @@ export default function Page() {
   });
 
   const localColor = useMemo(() => colorFromName(nameInput || "Blob"), [nameInput]);
+
+  useEffect(() => {
+    async function init() {
+      await initSchema();
+      const massLb = await getTopMassPlayers(5);
+      const killLb = await getTopKillPlayers(5);
+      setDbLeaderboards({ mass: massLb, kill: killLb });
+    }
+    init();
+  }, []);
+
+  const handleLogin = async () => {
+    const wallet = await auth.connect();
+    if (wallet) {
+      let profile = await getUserProfile(wallet);
+      if (!profile) {
+        profile = await createUserProfile(wallet, nameInput || 'Guest');
+      }
+      if (profile) {
+        setCurrentUser(profile);
+        setNameInput(profile.username);
+        setEditProfileData({ username: profile.username, twitter: profile.twitter || "", youtube: profile.youtube || "", bio: profile.bio || "" });
+      }
+    }
+  };
+
+  const saveProfile = async () => {
+    if (!currentUser) return;
+    const updated = { ...currentUser, ...editProfileData };
+    await updateUserProfile(updated);
+    setCurrentUser(updated);
+    setNameInput(updated.username);
+    alert("Profile saved!");
+  };
+
+  const handleBuySkin = async (skinId: string) => {
+    if (!auth.isConnected() || !currentUser) {
+      alert("Please connect wallet first");
+      return;
+    }
+    const success = await auth.purchaseSkin(0.1, "2Z9eW3nwa2GZUM1JzXdfBK1MN57RPA2PrhuTREEZ31VY");
+    if (success) {
+      await addOwnedSkin(auth.walletAddress!, skinId);
+      const newOwned = [...(currentUser.owned_skins || freeSkins.map(s => s.id)), skinId];
+      setCurrentUser({ ...currentUser, owned_skins: newOwned });
+      alert(`Successfully purchased ${skinId}!`);
+    }
+  };
 
   useEffect(() => {
     const onResize = () => {
@@ -249,11 +353,14 @@ export default function Page() {
       let cells: NetCell[] = [];
       let pellets: NetPellet[] = render.fallbackPellets;
       let viruses: NetVirus[] = [];
+      let powerups: NetPowerUp[] = [];
+      let obstacles: NetObstacle[] = [];
+
       if (currSnap) {
         players = new Map(currSnap.players.map((p) => [p.id, p]));
         const prevCells = new Map((prevSnap?.cells ?? []).map((c) => [c.id, c]));
 
-        cells = currSnap.cells.map((c) => {
+        cells = currSnap.cells.map((c: any) => {
           const prev = prevCells.get(c.id);
           if (!prev) return c;
           return {
@@ -266,6 +373,8 @@ export default function Page() {
 
         pellets = currSnap.pellets;
         viruses = currSnap.viruses;
+        powerups = currSnap.powerups;
+        obstacles = currSnap.obstacles;
       }
 
       const localId = serverRef.current.playerId;
@@ -308,6 +417,14 @@ export default function Page() {
         drawVirus(ctx, virus, zoom);
       }
 
+      for (const pw of powerups) {
+        drawPowerUp(ctx, pw, zoom);
+      }
+
+      for (const obs of obstacles) {
+        drawObstacle(ctx, obs, zoom);
+      }
+
       const sortedCells = [...cells].sort((a, b) => a.mass - b.mass);
       for (const cell of sortedCells) {
         const owner = players.get(cell.ownerId);
@@ -318,7 +435,7 @@ export default function Page() {
       ctx.restore();
 
       if (currSnap && now - hudUpdatedAt > 120) {
-        const ranking = currSnap.leaderboard.map((entry) => ({
+        const ranking = currSnap.leaderboard.map((entry: any) => ({
           name: entry.name,
           mass: entry.mass,
           you: entry.id === localId,
@@ -407,6 +524,8 @@ export default function Page() {
           name: name.trim() || "Blob",
           roomId: roomId.trim() || "main",
           color: localColor,
+          skin: selectedSkin,
+          gameMode: gameMode,
         }),
       );
     };
@@ -432,7 +551,7 @@ export default function Page() {
       }
 
       if (msg.type === "dead") {
-        setHud((prev) => ({ ...prev, playerAlive: false }));
+        setHud((prev: any) => ({ ...prev, playerAlive: false }));
         return;
       }
 
@@ -443,12 +562,12 @@ export default function Page() {
 
     ws.onclose = () => {
       renderRef.current.connected = false;
-      setHud((prev) => ({ ...prev, connected: false }));
+      setHud((prev: any) => ({ ...prev, connected: false }));
     };
 
     ws.onerror = () => {
       renderRef.current.connected = false;
-      setHud((prev) => ({ ...prev, connected: false }));
+      setHud((prev: any) => ({ ...prev, connected: false }));
     };
   };
 
@@ -483,7 +602,7 @@ export default function Page() {
       <section className="hud top-right">
         <h2>Leaderboard</h2>
         <ol>
-          {hud.leaderboard.map((entry) => (
+          {hud.leaderboard.map((entry: any) => (
             <li key={`${entry.name}_${entry.mass}`} className={entry.you ? "you" : ""}>
               {entry.name} - {Math.round(entry.mass)}
             </li>
@@ -496,44 +615,150 @@ export default function Page() {
         <p>Space: Split</p>
         <p>W: Eject mass</p>
         <p>Room: {joinedRoom || roomInput}</p>
+        {!started && <button onClick={() => setShowStore(true)} style={{ marginTop: 10, padding: 8, background: '#3b82f6', color: '#fff', borderRadius: 8, border: 'none', cursor: 'pointer' }}>Open Store</button>}
       </section>
+
+      {started && !canShowMenu && (
+        <button
+          onClick={() => setIsPaused(true)}
+          style={{ position: 'absolute', top: 14, left: '50%', transform: 'translateX(-50%)', zIndex: 50, padding: '10px 20px', borderRadius: 20, background: 'rgba(255,255,255,0.8)', border: '1px solid #ccc', cursor: 'pointer' }}
+        >
+          ⏸ Pause
+        </button>
+      )}
+
+      {isPaused && (
+        <div className="overlay" style={{ zIndex: 60 }}>
+          <div className="panel" style={{ textAlign: 'center' }}>
+            <h2>Game Paused</h2>
+            <button onClick={() => setIsPaused(false)}>Resume</button>
+            <button onClick={() => { setIsPaused(false); setStarted(false); wsRef.current?.close(); }} style={{ background: '#ef4444' }}>Leave Room</button>
+          </div>
+        </div>
+      )}
+
+      {showStore && (
+        <div className="overlay" style={{ zIndex: 60 }}>
+          <div className="panel" style={{ width: 600, maxWidth: '90vw' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2>Store & Skins</h2>
+              <button onClick={() => setShowStore(false)} style={{ background: 'transparent', color: '#333', padding: 0 }}>✖</button>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+              <button onClick={() => setActiveStoreTab('premium')} style={{ flex: 1, background: activeStoreTab === 'premium' ? '#3b82f6' : '#e2e8f0', color: activeStoreTab === 'premium' ? '#fff' : '#333' }}>Premium (SOL)</button>
+              <button onClick={() => setActiveStoreTab('free')} style={{ flex: 1, background: activeStoreTab === 'free' ? '#3b82f6' : '#e2e8f0', color: activeStoreTab === 'free' ? '#fff' : '#333' }}>Free</button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(120px, 1fr))', gap: 10, maxHeight: 400, overflowY: 'auto' }}>
+              {(activeStoreTab === 'premium' ? premiumSkins : freeSkins).map(skin => {
+                const defaultOwned = freeSkins.map(s => s.id);
+                const isOwned = (currentUser?.owned_skins || defaultOwned).includes(skin.id);
+                const isEquipped = selectedSkin === skin.id;
+                return (
+                  <div key={skin.id} style={{ border: '1px solid #ccc', borderRadius: 8, padding: 10, textAlign: 'center' }}>
+                    <div style={{ width: 60, height: 60, margin: '0 auto 10px', borderRadius: '50%', background: skin.type === 'color' ? (skin as any).value : skin.type === 'gradient' ? (skin as any).value : `url(/skins/${skin.id}.png) center/cover` }}></div>
+                    <p style={{ fontSize: 14, fontWeight: 'bold' }}>{skin.name}</p>
+                    {isEquipped ? (
+                      <button disabled style={{ width: '100%', background: '#22c55e', marginTop: 10 }}>Equipped</button>
+                    ) : isOwned ? (
+                      <button onClick={() => setSelectedSkin(skin.id)} style={{ width: '100%', background: '#3b82f6', marginTop: 10 }}>Equip</button>
+                    ) : (
+                      <button onClick={() => handleBuySkin(skin.id)} style={{ width: '100%', background: '#f59e0b', marginTop: 10 }}>Buy (0.1 SOL)</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showProfile && currentUser && (
+        <div className="overlay" style={{ zIndex: 60 }}>
+          <div className="panel">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <h2>Profile</h2>
+              <button onClick={() => setShowProfile(false)} style={{ background: 'transparent', color: '#333', padding: 0 }}>✖</button>
+            </div>
+            <p>Wallet: {currentUser.wallet_address.substring(0, 8)}...</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 15, background: '#f1f5f9', padding: 10, borderRadius: 8 }}>
+              <div><b>Wins:</b> {currentUser.wins}</div>
+              <div><b>Losses:</b> {currentUser.losses}</div>
+              <div><b>Kills:</b> {currentUser.kills}</div>
+              <div><b>Max Mass:</b> {Math.round(currentUser.max_mass)}</div>
+            </div>
+            <label>Username <input value={editProfileData.username} onChange={e => setEditProfileData({ ...editProfileData, username: e.target.value })} /></label>
+            <label>Twitter <input value={editProfileData.twitter} onChange={e => setEditProfileData({ ...editProfileData, twitter: e.target.value })} /></label>
+            <button onClick={saveProfile} style={{ marginTop: 10 }}>Save Profile</button>
+          </div>
+        </div>
+      )}
 
       {canShowMenu && (
         <section className="overlay">
-          <form className="panel" onSubmit={onPlay}>
-            <h2>
-              {!started
-                ? "BLOBHAUS Arena"
-                : !hud.connected
-                  ? "Disconnected"
-                  : "You were eaten"}
-            </h2>
-            <p>Server-authoritative multiplayer with rooms, bots, viruses, and leaderboard sync.</p>
-            <label>
-              Nickname
-              <input
-                value={nameInput}
-                onChange={(e) => setNameInput(e.target.value)}
-                maxLength={20}
-                placeholder="Nickname"
-              />
-            </label>
-            <label>
-              Room
-              <input
-                value={roomInput}
-                onChange={(e) => setRoomInput(e.target.value.replace(/\s+/g, ""))}
-                maxLength={32}
-                placeholder="main"
-              />
-            </label>
-            {!started || !hud.connected ? (
-              <button type="submit">{started ? "Reconnect" : "Play"}</button>
-            ) : (
-              <button type="button" onClick={onRespawn}>
-                Respawn
-              </button>
-            )}
+          <form className="panel" onSubmit={onPlay} style={{ width: 600, maxWidth: '95vw', gridTemplateColumns: '1fr 300px' }}>
+            <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+              <div>
+                <h2 style={{ fontSize: 32, marginBottom: 5 }}>
+                  {!started ? "VAIIYA ARENA" : !hud.connected ? "Disconnected" : "You were eaten"}
+                </h2>
+                <p>Next.js Server-Authoritative Port</p>
+              </div>
+              {!currentUser ? (
+                <button type="button" onClick={handleLogin} style={{ background: '#8b5cf6' }}>Connect Wallet</button>
+              ) : (
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button type="button" onClick={() => setShowProfile(true)} style={{ background: '#64748b' }}>{currentUser.username}</button>
+                  <button type="button" onClick={() => setShowStore(true)} style={{ background: '#f59e0b' }}>Store</button>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 15 }}>
+              <label>
+                Nickname
+                <input
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  maxLength={20}
+                  placeholder="Nickname"
+                />
+              </label>
+              <label>
+                Room
+                <input
+                  value={roomInput}
+                  onChange={(e) => setRoomInput(e.target.value.replace(/\s+/g, ""))}
+                  maxLength={32}
+                  placeholder="main"
+                />
+              </label>
+              <div>
+                <label style={{ marginBottom: 8, display: 'block' }}>Game Mode</label>
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button type="button" onClick={() => setGameMode('ffa')} style={{ flex: 1, background: gameMode === 'ffa' ? '#3b82f6' : '#e2e8f0', color: gameMode === 'ffa' ? '#fff' : '#333' }}>FFA</button>
+                  <button type="button" onClick={() => setGameMode('team')} style={{ flex: 1, background: gameMode === 'team' ? '#ef4444' : '#e2e8f0', color: gameMode === 'team' ? '#fff' : '#333' }}>Team</button>
+                </div>
+              </div>
+              {!started || !hud.connected ? (
+                <button type="submit" style={{ padding: '16px', fontSize: '1.2rem', marginTop: 10 }}>{started ? "Reconnect" : "Play"}</button>
+              ) : (
+                <button type="button" onClick={onRespawn} style={{ padding: '16px', fontSize: '1.2rem', marginTop: 10 }}>
+                  Respawn
+                </button>
+              )}
+            </div>
+
+            <div style={{ background: '#f8fafc', padding: 15, borderRadius: 12, border: '1px solid #e2e8f0' }}>
+              <h3 style={{ margin: '0 0 10px', fontSize: 16 }}>Global Rankings</h3>
+              <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ margin: '0 0 5px', fontSize: 13, color: '#64748b' }}>Top Mass</h4>
+                  <div style={{ fontSize: 13 }}>
+                    {dbLeaderboards.mass.map((p, i) => <div key={i} style={{ marginBottom: 4 }}><b>{i + 1}.</b> {p.username} <span style={{ float: 'right' }}>{Math.round(p.max_mass)}</span></div>)}
+                  </div>
+                </div>
+              </div>
+            </div>
           </form>
         </section>
       )}
@@ -600,17 +825,106 @@ function drawVirus(ctx: CanvasRenderingContext2D, virus: NetVirus, zoom: number)
 function drawCell(ctx: CanvasRenderingContext2D, cell: NetCell, owner: NetPlayer, zoom: number) {
   const r = cellRadius(cell.mass);
 
-  ctx.fillStyle = owner.color;
-  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
-  ctx.lineWidth = 2 / zoom;
+  ctx.save();
   ctx.beginPath();
   ctx.arc(cell.x, cell.y, r, 0, Math.PI * 2);
+  ctx.closePath();
+  ctx.clip(); // Clip everything to the blob circle
+
+  ctx.fillStyle = owner.color;
   ctx.fill();
+
+  if (owner.skin && owner.skin !== 'default' && owner.skin !== 'neon' && typeof window !== 'undefined') {
+    // Only fetch if image
+    let img = (window as any)[`__skin_${owner.skin}`];
+    if (!img) {
+      img = new Image();
+      img.src = `/skins/${owner.skin}.png`;
+      (window as any)[`__skin_${owner.skin}`] = img;
+    }
+    if (img.complete && img.naturalHeight !== 0) {
+      ctx.drawImage(img, cell.x - r, cell.y - r, r * 2, r * 2);
+    }
+  } else if (owner.skin === 'neon') {
+    const gradient = ctx.createLinearGradient(cell.x - r, cell.y - r, cell.x + r, cell.y + r);
+    gradient.addColorStop(0, '#3b82f6');
+    gradient.addColorStop(1, '#60a5fa');
+    ctx.fillStyle = gradient;
+    ctx.fill();
+  }
+
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.1)";
+  ctx.lineWidth = 2 / zoom;
   ctx.stroke();
 
+  ctx.restore();
+
+  // Draw name outside of clip mask
   ctx.fillStyle = "white";
-  ctx.font = `${Math.max(12 / zoom, r / 3)}px 'Trebuchet MS', sans-serif`;
+  ctx.strokeStyle = "black";
+  ctx.lineWidth = 3 / zoom;
+  ctx.font = `bold ${Math.max(12 / zoom, r / 3)}px 'Trebuchet MS', sans-serif`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
+  ctx.strokeText(owner.name, cell.x, cell.y);
   ctx.fillText(owner.name, cell.x, cell.y);
+}
+
+function drawPowerUp(ctx: CanvasRenderingContext2D, pw: NetPowerUp, zoom: number) {
+  const r = 20;
+  ctx.beginPath();
+  ctx.arc(pw.x, pw.y, r, 0, Math.PI * 2);
+
+  if (pw.type === 'SPEED') {
+    ctx.fillStyle = '#0ea5e9'; // Blue shield
+    ctx.fill();
+    ctx.strokeStyle = '#bae6fd';
+  } else if (pw.type === 'SHIELD') {
+    ctx.fillStyle = '#8b5cf6'; // Purple shield
+    ctx.fill();
+    ctx.strokeStyle = '#ddd6fe';
+  } else {
+    ctx.fillStyle = '#eab308'; // Yellow Mass
+    ctx.fill();
+    ctx.strokeStyle = '#fef08a';
+  }
+
+  ctx.lineWidth = 4 / zoom;
+  ctx.stroke();
+
+  // Icon
+  ctx.fillStyle = 'white';
+  ctx.font = `bold ${14 / zoom}px Arial`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(pw.type === 'SPEED' ? '⚡' : pw.type === 'SHIELD' ? '🛡️' : 'M', pw.x, pw.y);
+}
+
+function drawObstacle(ctx: CanvasRenderingContext2D, obs: NetObstacle, zoom: number) {
+  ctx.save();
+  ctx.translate(obs.x, obs.y);
+  ctx.rotate(obs.rotation);
+
+  ctx.fillStyle = obs.color;
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 3 / zoom;
+
+  ctx.beginPath();
+  if (obs.shape === 'RECT') {
+    const w = obs.radius * 2;
+    const h = obs.radius * 2; // For now keeping square
+    ctx.rect(-w / 2, -h / 2, w, h);
+  } else if (obs.shape === 'CIRCLE') {
+    ctx.arc(0, 0, obs.radius, 0, Math.PI * 2);
+  } else if (obs.shape === 'TRIANGLE') {
+    const r = obs.radius;
+    ctx.moveTo(0, -r);
+    ctx.lineTo(r, r);
+    ctx.lineTo(-r, r);
+    ctx.closePath();
+  }
+
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }

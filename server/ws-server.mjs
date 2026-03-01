@@ -11,11 +11,13 @@ const WORLD_SIZE = 8000;
 const HALF_WORLD = WORLD_SIZE / 2;
 const FOOD_COUNT = 1450;
 const VIRUS_COUNT = 30;
+const POWERUP_COUNT = 15;
 const BOT_COUNT = 18;
 const MIN_MASS = 10;
 const MAX_SPLITS = 16;
 const MERGE_DELAY = 12;
 const ROOM_TTL_MS = 5 * 60 * 1000;
+const POWERUP_TYPES = ['SPEED', 'SHIELD', 'MASS'];
 
 const FOOD_COLORS = [
   '#2ecc71',
@@ -86,6 +88,16 @@ function makeVirus() {
   };
 }
 
+function makePowerUp() {
+  const pos = randomWorldPos();
+  return {
+    id: makeId('pw'),
+    x: pos.x,
+    y: pos.y,
+    type: POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)],
+  };
+}
+
 function centroid(cells) {
   if (!cells.length) return { x: 0, y: 0 };
   let totalMass = 0;
@@ -111,10 +123,13 @@ function splitCountFromMass(mass) {
 function createRoom(roomId) {
   const room = {
     id: roomId,
+    gameMode: 'ffa',
     players: new Map(),
     cells: new Map(),
     pellets: new Map(),
     viruses: new Map(),
+    powerups: new Map(),
+    obstacles: new Map(),
     lastSnapshotAt: 0,
     lastHumanAt: Date.now(),
     botCounter: 1,
@@ -128,6 +143,11 @@ function createRoom(roomId) {
   for (let i = 0; i < VIRUS_COUNT; i += 1) {
     const virus = makeVirus();
     room.viruses.set(virus.id, virus);
+  }
+
+  for (let i = 0; i < POWERUP_COUNT; i += 1) {
+    const pw = makePowerUp();
+    room.powerups.set(pw.id, pw);
   }
 
   rooms.set(roomId, room);
@@ -146,11 +166,14 @@ function createBot(room) {
     id,
     name,
     color: playerColor((room.botCounter % BOT_COUNT) / BOT_COUNT),
+    skin: 'default',
+    team: room.gameMode === 'team' ? (Math.random() > 0.5 ? 'red' : 'blue') : undefined,
     isBot: true,
     socket: null,
     target: randomWorldPos(),
     splitQueued: false,
     ejectQueued: false,
+    powerups: { speed: 0, shield: 0 },
   };
 
   room.players.set(bot.id, bot);
@@ -209,6 +232,11 @@ function ensureRoomCounts(room) {
   while (room.viruses.size < VIRUS_COUNT) {
     const virus = makeVirus();
     room.viruses.set(virus.id, virus);
+  }
+
+  while (room.powerups.size < POWERUP_COUNT) {
+    const pw = makePowerUp();
+    room.powerups.set(pw.id, pw);
   }
 
   let botCount = 0;
@@ -349,7 +377,11 @@ function updateMovement(room, dt) {
     const nx = dist > 0 ? dx / dist : 0;
     const ny = dist > 0 ? dy / dist : 0;
 
-    const speed = 300 / Math.pow(cellRadius(cell.mass), 0.38);
+    let speedBase = 300 / Math.pow(cellRadius(cell.mass), 0.38);
+    if (owner.powerups.speed > 0) {
+      speedBase *= 2;
+    }
+    const speed = speedBase;
     const damp = clamp(dist / 140, 0.1, 1);
 
     const vx = nx * speed * damp + cell.boostX;
@@ -361,6 +393,24 @@ function updateMovement(room, dt) {
     cell.boostX *= Math.pow(0.16, dt);
     cell.boostY *= Math.pow(0.16, dt);
     cell.mergeCooldown = Math.max(0, cell.mergeCooldown - dt);
+
+    // Obstacle Collisions
+    for (const obs of room.obstacles.values()) {
+      const odx = cell.x - obs.x;
+      const ody = cell.y - obs.y;
+      const odist = Math.sqrt(odx * odx + ody * ody);
+      const minClearance = cellRadius(cell.mass) + obs.radius;
+
+      if (odist < minClearance) {
+        const angle = Math.atan2(ody, odx);
+        cell.x = obs.x + Math.cos(angle) * minClearance;
+        cell.y = obs.y + Math.sin(angle) * minClearance;
+
+        // Kill velocity
+        cell.boostX = 0;
+        cell.boostY = 0;
+      }
+    }
   }
 
   for (const sameOwnerCells of grouped.values()) {
@@ -404,13 +454,34 @@ function updateMovement(room, dt) {
 
 function consumeFood(room) {
   const pellets = [...room.pellets.values()];
+  const powerups = [...room.powerups.values()];
+
   for (const cell of room.cells.values()) {
+    const owner = room.players.get(cell.ownerId);
+    if (!owner) continue;
+
     const r = cellRadius(cell.mass);
+
+    // Consume Pellets
     for (const pellet of pellets) {
       if (!room.pellets.has(pellet.id)) continue;
       if (distance(cell, pellet) < r - 2) {
         cell.mass += pellet.mass;
         room.pellets.delete(pellet.id);
+      }
+    }
+
+    // Consume Powerups
+    for (const pw of powerups) {
+      if (!room.powerups.has(pw.id)) continue;
+      if (distance(cell, pw) < r + 10) {
+        if (pw.type === 'SPEED') owner.powerups.speed = 10000;
+        else if (pw.type === 'SHIELD') owner.powerups.shield = 10000;
+        else if (pw.type === 'MASS') {
+          const myCells = [...room.cells.values()].filter(c => c.ownerId === owner.id);
+          myCells.forEach(c => c.mass += 50);
+        }
+        room.powerups.delete(pw.id);
       }
     }
   }
@@ -426,6 +497,9 @@ function consumeCells(room) {
 
       if (!room.cells.has(a.id) || !room.cells.has(b.id)) continue;
       if (a.ownerId === b.ownerId) continue;
+      const ownerA = room.players.get(a.ownerId);
+      const ownerB = room.players.get(b.ownerId);
+      if (room.gameMode === 'team' && ownerA?.team === ownerB?.team && ownerA?.team) continue;
 
       const ra = cellRadius(a.mass);
       const rb = cellRadius(b.mass);
@@ -444,11 +518,21 @@ function consumeCells(room) {
 
 function hitViruses(room) {
   for (const cell of [...room.cells.values()]) {
+    const owner = room.players.get(cell.ownerId);
+    if (!owner) continue;
+
     const r = cellRadius(cell.mass);
 
     for (const virus of room.viruses.values()) {
       const vr = cellRadius(virus.mass);
       if (distance(cell, virus) >= r + vr * 0.2 || cell.mass <= 130) continue;
+
+      if (owner.powerups.shield > 0) {
+        // Shield logic: absorb mass, no explosion
+        cell.mass += virus.mass / 2;
+        room.viruses.delete(virus.id);
+        continue;
+      }
 
       const ownerCells = [...room.cells.values()].filter((c) => c.ownerId === cell.ownerId);
       const possibleSplits = clamp(
@@ -532,6 +616,8 @@ function broadcastSnapshot(room) {
     id: p.id,
     name: p.name,
     color: p.color,
+    skin: p.skin,
+    team: p.team,
     isBot: p.isBot,
   }));
 
@@ -539,6 +625,7 @@ function broadcastSnapshot(room) {
     type: 'snapshot',
     serverTime: now,
     roomId: room.id,
+    gameMode: room.gameMode,
     players,
     cells: [...room.cells.values()].map((c) => ({
       id: c.id,
@@ -549,6 +636,8 @@ function broadcastSnapshot(room) {
     })),
     pellets: [...room.pellets.values()],
     viruses: [...room.viruses.values()],
+    powerups: [...room.powerups.values()],
+    obstacles: [...room.obstacles.values()],
     leaderboard: leaderboardForRoom(room),
   };
 
@@ -614,15 +703,33 @@ wss.on('connection', (socket) => {
         id: playerId,
         name,
         color,
+        skin: msg.skin || 'default',
+        team: room.gameMode === 'team' ? (Math.random() > 0.5 ? 'red' : 'blue') : undefined,
         isBot: false,
         socket,
         target: randomWorldPos(),
         splitQueued: false,
         ejectQueued: false,
+        powerups: { speed: 0, shield: 0 },
       });
 
       spawnPlayerCell(room, playerId, 48);
       ensureRoomCounts(room);
+
+      room.obstacles.clear();
+      if (msg.mapData && msg.mapData.obstacles) {
+        for (const obs of msg.mapData.obstacles) {
+          room.obstacles.set(obs.id, {
+            id: obs.id,
+            x: obs.x,
+            y: obs.y,
+            radius: obs.width / 2, // Map width to radius
+            shape: obs.shape,
+            color: obs.color,
+            rotation: obs.rotation
+          });
+        }
+      }
 
       socket.send(
         JSON.stringify({
@@ -634,6 +741,24 @@ wss.on('connection', (socket) => {
         }),
       );
 
+      return;
+    }
+
+    if (msg.type === 'saveMap' && currentRoom) {
+      currentRoom.obstacles.clear();
+      if (msg.mapData && msg.mapData.obstacles) {
+        for (const obs of msg.mapData.obstacles) {
+          currentRoom.obstacles.set(obs.id, {
+            id: obs.id,
+            x: obs.x,
+            y: obs.y,
+            radius: obs.width / 2,
+            shape: obs.shape,
+            color: obs.color,
+            rotation: obs.rotation
+          });
+        }
+      }
       return;
     }
 
@@ -695,6 +820,13 @@ setInterval(() => {
   for (const [roomId, room] of rooms.entries()) {
     ensureRoomCounts(room);
     updateBots(room, dt);
+
+    // Decay powerup timers
+    for (const player of room.players.values()) {
+      if (player.powerups.speed > 0) player.powerups.speed -= dt * 1000;
+      if (player.powerups.shield > 0) player.powerups.shield -= dt * 1000;
+    }
+
     applyPlayerActions(room);
     updateMovement(room, dt);
     consumeFood(room);

@@ -34,6 +34,7 @@ export class InputManager {
     private initKeyboard() {
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
+                if (e.repeat) return;
                 this.onSplit();
             } else if (e.code === 'KeyE' || e.code === 'KeyW') {
                 this.onEject();

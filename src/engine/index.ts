@@ -264,7 +264,11 @@ export class Game {
                         const eatenName = target.name || (target instanceof Blob ? (target.type === 'player' ? 'Player' : 'Bot') : 'Something');
 
                         if (target instanceof Blob) {
-                            this.onKill(eaterName, eatenName);
+                            // Only notify if it's NOT a player merging their own cells
+                            const isSelfMerge = blob.type === 'player' && target.type === 'player';
+                            if (!isSelfMerge) {
+                                this.onKill(eaterName, eatenName);
+                            }
                         }
 
                         this.emitParticles(target.position.x, target.position.y, target.color);
@@ -311,7 +315,7 @@ export class Game {
                             this.explodeBlob(blob);
                         }
                         this.entities = this.entities.filter(e => e !== target);
-                        setTimeout(() => this.spawnViruses(1), 10000);
+                        setTimeout(() => this.spawnViruses(1), 30000); // Increased respawn time
                     }
                 }
 
@@ -650,7 +654,7 @@ export class Game {
 
     private explodeBlob(blob: Blob) {
         if (this.playerBlobs.length >= 16) return;
-        const maxPieces = 16; // Increased from 8
+        const maxPieces = 10;
         const canCreate = Math.min(maxPieces, 16 - this.playerBlobs.length);
         if (canCreate <= 1) return;
 

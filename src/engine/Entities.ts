@@ -108,63 +108,18 @@ export class Food extends Entity {
     }
 }
 
-export interface PerimeterPoint {
-    x: number;
-    y: number;
-    vx: number;
-    vy: number;
-}
 
 export class Blob extends Entity {
     target: Vector = { x: 0, y: 0 };
     speed: number = 200;
     splitTimestamp: number = 0;
 
-    // Jelly Physics
-    perimeterPoints: PerimeterPoint[] = [];
-    numPoints: number = 16;
-    elasticity: number = 0.3; // Spring strength
-    dampening: number = 0.9;  // Friction for points
-    wobbleIntensity: number = 1.0;
-
     constructor(state: EntityState) {
         super(state);
         this.calculateRadius();
         this.splitTimestamp = Date.now();
-        this.initPerimeter();
     }
 
-    private initPerimeter() {
-        this.perimeterPoints = [];
-        for (let i = 0; i < this.numPoints; i++) {
-            const angle = (i / this.numPoints) * Math.PI * 2;
-            this.perimeterPoints.push({
-                x: Math.cos(angle) * this.radius,
-                y: Math.sin(angle) * this.radius,
-                vx: 0,
-                vy: 0
-            });
-        }
-    }
-
-    private updatePerimeter(dt: number) {
-        // Points update scaled by dt (assuming default ~60fps for base values)
-        const timeScale = dt * 60;
-        for (let i = 0; i < this.numPoints; i++) {
-            const pt = this.perimeterPoints[i];
-            const angle = (i / this.numPoints) * Math.PI * 2;
-            const idealX = Math.cos(angle) * this.radius;
-            const idealY = Math.sin(angle) * this.radius;
-            const ax = (idealX - pt.x) * this.elasticity * timeScale;
-            const ay = (idealY - pt.y) * this.elasticity * timeScale;
-            const lagX = -this.velocity.x * 0.05 * timeScale;
-            const lagY = -this.velocity.y * 0.05 * timeScale;
-            pt.vx = (pt.vx + ax + lagX) * this.dampening;
-            pt.vy = (pt.vy + ay + lagY) * this.dampening;
-            pt.x += pt.vx;
-            pt.y += pt.vy;
-        }
-    }
 
     update(dt: number) {
         const dx = this.target.x - this.position.x;
@@ -180,7 +135,6 @@ export class Blob extends Entity {
             this.velocity.y += (targetVelY - this.velocity.y) * 0.1;
         }
 
-        this.updatePerimeter(dt);
         super.update(dt);
     }
 
@@ -280,34 +234,12 @@ export class Blob extends Entity {
 
     private static skinCache: Map<string, HTMLImageElement> = new Map();
 
-    // Integrated Draw Method with Skins & Jelly Physics
+    // Simplified Stable Draw Method
     draw(ctx: CanvasRenderingContext2D, camera: { x: number, y: number, scale: number }) {
-        if (this.perimeterPoints.length === 0) return;
-
         ctx.save();
+
         ctx.beginPath();
-
-        const first = this.perimeterPoints[0];
-        const last = this.perimeterPoints[this.numPoints - 1];
-
-        ctx.moveTo(
-            this.position.x + (first.x + last.x) / 2,
-            this.position.y + (first.y + last.y) / 2
-        );
-
-        for (let i = 0; i < this.numPoints; i++) {
-            const p1 = this.perimeterPoints[i];
-            const p2 = this.perimeterPoints[(i + 1) % this.numPoints];
-            const midX = (p1.x + p2.x) / 2;
-            const midY = (p1.y + p2.y) / 2;
-            ctx.quadraticCurveTo(
-                this.position.x + p1.x,
-                this.position.y + p1.y,
-                this.position.x + midX,
-                this.position.y + midY
-            );
-        }
-
+        ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
         ctx.closePath();
 
         // Check for image skin
@@ -339,7 +271,7 @@ export class Blob extends Entity {
         }
 
         // Standard outline
-        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.2)';
+        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.3)';
         ctx.lineWidth = this.team ? 6 / camera.scale : 2 / camera.scale;
         ctx.stroke();
 
@@ -349,7 +281,7 @@ export class Blob extends Entity {
             ctx.font = `bold ${Math.max(12, this.radius / 2)}px Inter, system-ui`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.shadowBlur = 5;
+            ctx.shadowBlur = 4;
             ctx.shadowColor = 'black';
             ctx.fillText(this.name, this.position.x, this.position.y);
         }

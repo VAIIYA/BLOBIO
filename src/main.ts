@@ -247,7 +247,6 @@ const createMapBtn = document.getElementById('createMapBtn') as HTMLButtonElemen
 const editorToolbar = document.getElementById('editorToolbar') as HTMLDivElement;
 const mapSizeInput = document.getElementById('mapSizeInput') as HTMLInputElement;
 const toolBtns = document.querySelectorAll('.tool-btn:not(.danger):not(.success)');
-const toolShapes = ['RECT', 'CIRCLE', 'TRIANGLE', 'BOUNCE', 'ZONE'];
 const clearMapBtn = document.getElementById('clearMapBtn');
 const saveMapBtn = document.getElementById('saveMapBtn');
 

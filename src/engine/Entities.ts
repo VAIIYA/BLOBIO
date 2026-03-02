@@ -80,17 +80,28 @@ export class Food extends Entity {
 
     draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {
         const time = Date.now() / 1000;
-        const pulse = 1 + Math.sin(time * 3) * 0.15; // Pulsing scale
+        const pulse = 1 + Math.sin(time * 4) * 0.2; // Faster, stronger pulse
 
         ctx.save();
         ctx.beginPath();
         ctx.arc(this.position.x, this.position.y, this.radius * pulse, 0, Math.PI * 2);
 
-        // Add a subtle glow to food
-        ctx.shadowBlur = 10;
+        // Strong neon glow
+        ctx.shadowBlur = 15;
         ctx.shadowColor = this.color;
 
         ctx.fillStyle = this.color;
+
+        // Add a slight white center for vibrancy
+        const grad = ctx.createRadialGradient(
+            this.position.x, this.position.y, 0,
+            this.position.x, this.position.y, this.radius * pulse
+        );
+        grad.addColorStop(0, '#ffffff');
+        grad.addColorStop(0.3, this.color);
+        grad.addColorStop(1, this.color);
+
+        ctx.fillStyle = grad;
         ctx.fill();
         ctx.closePath();
         ctx.restore();

@@ -52,10 +52,10 @@ export class Game {
 
         // Passive food spawning
         setInterval(() => {
-            if (this.entities.filter(e => e instanceof Food).length < 3000) {
-                this.spawnFood(15);
+            if (this.entities.filter(e => e instanceof Food).length < 6000) {
+                this.spawnFood(50);
             }
-        }, 333);
+        }, 200);
     }
 
     private resize() {

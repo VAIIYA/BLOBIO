@@ -475,8 +475,9 @@ h1 {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  z-index: 100;
+  z-index: 1000;
   color: white;
+  pointer-events: all;
   transition: background 0.2s, transform 0.2s;
 }
 
@@ -864,18 +865,20 @@ h1 {
   z-index: 2000;
   display: flex;
   justify-content: center;
-  align-items: center;
+  align-items: flex-start;
   padding: 20px;
+  overflow-y: auto;
 }
 
 .profile-layout {
   width: 100%;
   max-width: 1000px;
-  max-height: 95vh;
+  max-height: none;
   display: flex;
   flex-direction: column;
   gap: 20px;
-  overflow-y: auto;
+  margin-bottom: 40px;
+  /* Space for mobile browser toolbars */
 }
 
 /* Custom scrollbar for layout */

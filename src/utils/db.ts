@@ -1,15 +1,15 @@
 import { createClient } from '@libsql/client';
 
-const url = process.env.NEXT_PUBLIC_TURSO_DATABASE_URL || 'libsql://dummy-url.turso.io';
-const authToken = process.env.NEXT_PUBLIC_TURSO_AUTH_TOKEN || 'dummy-token';
+const url = import.meta.env.VITE_TURSO_DATABASE_URL;
+const authToken = import.meta.env.VITE_TURSO_AUTH_TOKEN;
 
-if (!process.env.NEXT_PUBLIC_TURSO_DATABASE_URL || !process.env.NEXT_PUBLIC_TURSO_AUTH_TOKEN) {
+if (!url || !authToken) {
     console.error('Turso credentials missing in .env');
 }
 
 export const db = createClient({
-    url,
-    authToken,
+    url: url || '',
+    authToken: authToken || '',
 });
 
 export interface UserProfile {
@@ -57,7 +57,6 @@ export async function initSchema() {
 }
 
 export async function getTopMassPlayers(limit: number = 5): Promise<UserProfile[]> {
-    if (url.includes('dummy')) return [];
     try {
         const result = await db.execute({
             sql: 'SELECT * FROM users ORDER BY max_mass DESC LIMIT ?',
@@ -71,7 +70,6 @@ export async function getTopMassPlayers(limit: number = 5): Promise<UserProfile[
 }
 
 export async function getTopKillPlayers(limit: number = 5): Promise<UserProfile[]> {
-    if (url.includes('dummy')) return [];
     try {
         const result = await db.execute({
             sql: 'SELECT * FROM users ORDER BY kills DESC LIMIT ?',

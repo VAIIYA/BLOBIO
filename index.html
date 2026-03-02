@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" type="image/png" href="/pwa-192x192.png" />
+  <meta name="viewport"
+    content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>VLOB</title>
+  <!-- Google Adsense -->
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-8049952818757963"
+    crossorigin="anonymous"></script>
+</head>
+
+<body>
+  <div id="app">
+    <canvas id="gameCanvas"></canvas>
+
+    <div id="hud">
+      <!-- ... -->
+      <div id="editorToolbar" class="editor-toolbar" style="display: none;">
+        <div class="toolbar-section">
+          <span>Objects:</span>
+          <button class="tool-btn active" data-shape="RECT">Rect</button>
+          <button class="tool-btn" data-shape="CIRCLE">Circle</button>
+          <button class="tool-btn" data-shape="TRIANGLE">Triangle</button>
+          <button class="tool-btn" data-shape="LINE">Line</button>
+        </div>
+        <div class="toolbar-section">
+          <span>Map Size:</span>
+          <input type="number" id="mapSizeInput" value="5000" step="500" style="width: 70px;">
+        </div>
+        <div class="toolbar-section">
+          <button id="clearMapBtn" class="tool-btn danger">Clear</button>
+          <button id="saveMapBtn" class="tool-btn success">Save & Exit</button>
+        </div>
+      </div>
+
+      <div class="score-display">
+        Mass: <span id="scoreValue">0</span>
+      </div>
+
+      <!-- In-Game Hamburger Menu -->
+      <button id="hamburgerMenuBtn" class="hamburger-btn" style="display: none;">
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" stroke-width="2" fill="none"
+          stroke-linecap="round" stroke-linejoin="round">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+
+      <!-- Mobile Controls -->
+      <div id="joystickContainer" class="joystick-container">
+        <div id="joystickKnob" class="joystick-knob"></div>
+      </div>
+
+      <div id="actionButtons" class="action-buttons">
+        <div id="throwBtn" class="btn-circle btn-throw">THROW</div>
+        <div id="splitBtn" class="btn-circle btn-split">SPLIT</div>
+      </div>
+    </div>
+
+    <div id="menu">
+      <!-- Mobile Sidebar Toggle -->
+      <button id="sidebarToggle" class="sidebar-toggle">
+        <span></span>
+        <span></span>
+        <span></span>
+      </button>
+
+      <!-- Global Leaderboards (Desktop Sidebar) -->
+      <div id="globalLeaderboards" class="global-leaderboards">
+        <div class="lb-section">
+          <h3>🏆 Top Mass</h3>
+          <div id="massLeaderboard" class="lb-list">Loading...</div>
+        </div>
+        <div class="lb-section">
+          <h3>⚔️ Top Kills</h3>
+          <div id="killLeaderboard" class="lb-list">Loading...</div>
+        </div>
+      </div>
+
+      <!-- Release List (Desktop Right Sidebar) -->
+      <div id="releaseList" class="release-list">
+        <div class="lb-section">
+          <h3>🚀 Latest Releases</h3>
+          <div class="lb-list">
+            <div class="release-item">
+              <span class="release-date">v1.16.0 - Menu Update</span>
+              <p>Added SPA routing (/ffa, /teams) and in-game pause menu with active state saving.</p>
+            </div>
+            <div class="release-item">
+              <span class="release-date">v1.15.0 - Map Expansion</span>
+              <p>Map doubled in size! Extra Large Viruses and 3x faster food generation added.</p>
+            </div>
+            <div class="release-item">
+              <span class="release-date">v1.14.0 - User Profiles</span>
+              <p>Integrated Solana wallets, profile names, and syncing Web3 cosmetic Skins.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="menu-card">
+        <h1>VLOB</h1>
+        <div id="authSection">
+          <button class="solana-btn" id="loginBtn">Connect Solana Wallet</button>
+          <p class="auth-hint">Or play as guest below</p>
+        </div>
+        <div id="profileSection" style="display: none;">
+          <button class="solana-btn" id="openProfileBtn"
+            style="background: linear-gradient(90deg, #ec4899, #8b5cf6); color: white;">My Profile</button>
+        </div>
+        <input type="text" id="playerName" placeholder="Guest" maxlength="15" value="" />
+
+        <div class="position-settings">
+          <label class="position-option">
+            <input type="radio" name="btnPos" value="left" id="posLeft"> Left
+          </label>
+          <label class="position-option">
+            <input type="radio" name="btnPos" value="right" id="posRight" checked> Right
+          </label>
+        </div>
+
+        <h4>Game Mode</h4>
+        <div class="mode-settings">
+          <div class="mode-option active" id="modeFFA" data-mode="ffa">FFA</div>
+          <div class="mode-option" id="modeTeam" data-mode="team">Team</div>
+        </div>
+        <h4>Skin</h4>
+        <div class="skin-options">
+          <div class="skin-option active" data-skin="default" style="background: #3b82f6;"></div>
+          <div class="skin-option" data-skin="neon" style="background: linear-gradient(45deg, #3b82f6, #60a5fa);">
+          </div>
+          <div class="skin-option" data-skin="doge"
+            style="background-image: url('/skins/doge.png'); background-size: cover;"></div>
+          <div class="skin-option" data-skin="bunny"
+            style="background-image: url('/skins/bunny.png'); background-size: cover;"></div>
+          <div class="skin-option" data-skin="alien_face"
+            style="background-image: url('/skins/alien_face.png'); background-size: cover;"></div>
+        </div>
+
+        <button class="solana-btn" id="openStoreBtn"
+          style="background: #eab308; color: #fff; margin-top: 10px; margin-bottom: 10px;">Open Store</button>
+        <button class="play-btn" id="playBtn" style="margin-bottom: 15px;">Play</button>
+        <button class="solana-btn" id="createMapBtn"
+          style="display: none; background: #8b5cf6; color: white; margin-bottom: 10px;">Create Map (Dev Only)</button>
+
+        <div class="controls-hint">
+          Desktop: Mouse to move, Space to Split, E to Eject<br>
+          Mobile: Touch to move
+        </div>
+
+        <!-- Google Adsense Banner -->
+        <div class="ad-banner-container">
+          <ins class="adsbygoogle" style="display:block" data-ad-client="ca-pub-8049952818757963"
+            data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
+          <script>
+            (adsbygoogle = window.adsbygoogle || []).push({});
+          </script>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Profile Modal -->
+  <div id="profileModal" class="profile-modal" style="display: none;">
+    <div class="profile-layout">
+      <!-- Header / Overview Card -->
+      <div class="profile-header-card">
+        <div class="profile-avatar" id="profileAvatar"></div>
+        <div class="profile-title">
+          <div class="profile-tags">
+            <span class="tag verified">Verified Wallet</span>
+            <span class="tag premium">VLOB Player</span>
+          </div>
+          <h2 id="profileDisplayName">ShadowBroker</h2>
+          <p class="wallet-hash" id="profileWalletDisplay">2Z9eW...EEX31</p>
+        </div>
+        <button id="closeProfileBtn" class="close-btn">&times;</button>
+
+        <div class="profile-stats-grid">
+          <div class="stat-box">
+            <h3 id="statWins">0</h3>
+            <p>WINS</p>
+          </div>
+          <div class="stat-box">
+            <h3 id="statLosses">0</h3>
+            <p>LOSSES</p>
+          </div>
+          <div class="stat-box">
+            <h3 id="statMaxMass">0</h3>
+            <p>MAX MASS</p>
+          </div>
+          <div class="stat-box">
+            <h3 id="statKills">0</h3>
+            <p>KILLS</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="profile-body-grid">
+        <!-- Settings Card -->
+        <div class="profile-settings-card">
+          <h3>Account Settings</h3>
+          <div class="input-group">
+            <label>DISPLAY NAME</label>
+            <input type="text" id="editDisplayName" placeholder="Your Name">
+          </div>
+          <div class="input-group">
+            <label>DIGITAL PRESENCE (Optional)</label>
+            <div class="social-inputs">
+              <input type="text" id="editTwitter" placeholder="Twitter URL">
+              <input type="text" id="editYoutube" placeholder="YouTube URL">
+            </div>
+          </div>
+          <div class="input-group">
+            <label>BIO</label>
+            <textarea id="editBio" rows="4" placeholder="Information is Currency..."></textarea>
+          </div>
+          <button id="saveProfileBtn" class="save-btn">Synchronize Changes</button>
+        </div>
+
+        <!-- Inventory Card -->
+        <div class="profile-inventory-card">
+          <div class="inventory-header">
+            <h3># My Skins</h3>
+            <span class="inventory-count" id="inventoryCount">0 ITEMS</span>
+          </div>
+          <div class="inventory-grid" id="inventoryGrid">
+            <!-- Owned skins injected here -->
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Store Modal -->
+  <div id="storeModal" class="store-modal" style="display: none;">
+    <div class="store-card">
+      <div class="store-header">
+        <h2>Skins Store</h2>
+        <button id="closeStoreBtn" class="close-btn">&times;</button>
+      </div>
+      <div class="store-tabs">
+        <button class="store-tab active" data-tab="premium">Premium</button>
+        <button class="store-tab" data-tab="free">Free</button>
+      </div>
+      <div class="store-grid" id="storeGrid">
+        <!-- Skin cards will be dynamically injected here -->
+      </div>
+    </div>
+  </div>
+
+  <!-- Death Popup -->
+  <div id="deathPopup" class="death-popup" style="display: none;">
+    <div class="popup-card">
+      <h2>DEFEATED</h2>
+      <div class="death-stats">
+        <p>Final Mass: <span id="deathMass">0</span></p>
+        <p>Time Alive: <span id="deathTime">0s</span></p>
+      </div>
+      <div class="popup-actions">
+        <button id="respawnBtn" class="play-btn">RESTART</button>
+        <button id="observeBtn" class="solana-btn" style="background: #2563eb;">OBSERVE</button>
+        <button id="quitBtn" class="solana-btn danger">QUIT</button>
+      </div>
+    </div>
+  </div>
+  <!-- Pause Modal -->
+  <div id="pauseModal" class="pause-modal" style="display: none;">
+    <div class="popup-card">
+      <h2>Game Paused</h2>
+      <div class="popup-actions">
+        <button id="resumeBtn" class="play-btn">Resume Game</button>
+        <button id="leaveGameBtn" class="solana-btn danger">Leave Game</button>
+      </div>
+    </div>
+  </div>
+
+  </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+
+</html>

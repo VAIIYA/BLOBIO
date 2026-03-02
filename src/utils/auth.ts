@@ -5,16 +5,21 @@ export class AuthManager {
     public walletAddress: string | null = null;
 
     constructor() {
-        if (typeof window !== 'undefined') {
-            this.provider = (window as any).solana;
-        }
+        this.updateProvider();
+    }
+
+    private updateProvider() {
+        this.provider = (window as any).solana || (window as any).phantom?.solana || (window as any).solflare;
+    }
+
+    public isPWA(): boolean {
+        return window.matchMedia('(display-mode: standalone)').matches ||
+            (window.navigator as any).standalone === true;
     }
 
     async connect(): Promise<string | null> {
+        this.updateProvider();
         if (!this.provider) {
-            if (typeof window !== 'undefined') {
-                window.open('https://phantom.app/', '_blank');
-            }
             return null;
         }
 

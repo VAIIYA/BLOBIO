@@ -127,7 +127,7 @@ game = new Game(canvas, async (stats: any) => {
 });
 
 // Load existing map on startup
-const initialMap = localStorage.getItem('vlob_custom_map');
+const initialMap = localStorage.getItem('blobio_custom_map');
 if (initialMap) game.loadMap(JSON.parse(initialMap));
 
 inputManager = new InputManager({
@@ -202,7 +202,7 @@ async function handleLogin() {
   const wallet = await auth.connect();
   if (!wallet) {
     if (auth.isPWA()) {
-      alert('Wallet extensions (like Phantom) cannot be triggered inside an installed PWA. Please open VLOB in your Chrome/Safari browser or use your wallet\'s built-in browser.');
+      alert('Wallet extensions (like Phantom) cannot be triggered inside an installed PWA. Please open BLOBIO in your Chrome/Safari browser or use your wallet\'s built-in browser.');
     } else {
       window.open('https://phantom.app/', '_blank');
     }
@@ -364,7 +364,7 @@ createMapBtn.addEventListener('click', () => {
   if (game) {
     game.setEditorMode(true);
     // Load existing map if any
-    const savedMap = localStorage.getItem('vlob_custom_map');
+    const savedMap = localStorage.getItem('blobio_custom_map');
     if (savedMap) game.loadMap(JSON.parse(savedMap));
   }
 });
@@ -389,7 +389,7 @@ clearMapBtn?.addEventListener('click', () => {
 saveMapBtn?.addEventListener('click', () => {
   if (game) {
     const mapData = game.getMapData();
-    localStorage.setItem('vlob_custom_map', JSON.stringify(mapData));
+    localStorage.setItem('blobio_custom_map', JSON.stringify(mapData));
     isEditorMode = false;
     game.setEditorMode(false);
     editorToolbar.style.display = 'none';
@@ -545,7 +545,7 @@ function startGame() {
   }, 300);
 
   // Use existing map if available
-  const savedMap = localStorage.getItem('vlob_custom_map');
+  const savedMap = localStorage.getItem('blobio_custom_map');
   if (game && savedMap) {
     game.loadMap(JSON.parse(savedMap));
   }

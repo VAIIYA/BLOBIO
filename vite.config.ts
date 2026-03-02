@@ -13,8 +13,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       manifest: {
-        name: 'VLOB',
-        short_name: 'VLOB',
+        name: 'BLOBIO',
+        short_name: 'BLOBIO',
         description: 'A premium Agar.io clone for desktop and mobile.',
         theme_color: '#0f172a',
         icons: [

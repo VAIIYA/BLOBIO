@@ -122,6 +122,86 @@ export class Blob extends Entity {
         super.update(dt);
     }
 
+    public decay(dt: number) {
+        // Only decay if mass is significant (e.g., > 100)
+        if (this.mass > 100) {
+            const decayAmount = this.mass * 0.001 * dt; // 0.1% per second
+            this.mass -= decayAmount;
+            this.calculateRadius();
+        }
+    }
+
+    public updateAI(entities: Entity[], dt: number) {
+        if (this.type !== 'bot') return;
+        // Optimization: Only update AI logic ~10 times per second
+        if (dt > 0 && Math.random() > 10 * dt) return;
+
+        let nearestThreat: Entity | null = null;
+        let nearestPrey: Entity | null = null;
+        let minDistThreat = Infinity;
+        let minDistPrey = Infinity;
+
+        const threatRadius = 800;
+        const huntRadius = 1200;
+
+        for (const entity of entities) {
+            if (entity === this || entity instanceof Food || entity instanceof PowerUp || entity instanceof Obstacle) continue;
+
+            const dx = entity.position.x - this.position.x;
+            const dy = entity.position.y - this.position.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (entity instanceof Blob) {
+                const sameTeam = this.team && entity.team && this.team === entity.team;
+                if (sameTeam) continue;
+
+                if (entity.mass > this.mass * 1.1) {
+                    // Threat
+                    if (dist < threatRadius && dist < minDistThreat) {
+                        minDistThreat = dist;
+                        nearestThreat = entity;
+                    }
+                } else if (this.mass > entity.mass * 1.1) {
+                    // Prey
+                    if (dist < huntRadius && dist < minDistPrey) {
+                        minDistPrey = dist;
+                        nearestPrey = entity;
+                    }
+                }
+            } else if (entity instanceof Virus) {
+                if (this.mass > entity.mass * 1.1 && dist < threatRadius) {
+                    // Virus is a threat to large blobs
+                    if (dist < minDistThreat) {
+                        minDistThreat = dist;
+                        nearestThreat = entity;
+                    }
+                }
+            }
+        }
+
+        if (nearestThreat) {
+            // Flee
+            const dx = this.position.x - nearestThreat.position.x;
+            const dy = this.position.y - nearestThreat.position.y;
+            const angle = Math.atan2(dy, dx);
+            this.target = {
+                x: this.position.x + Math.cos(angle) * 500,
+                y: this.position.y + Math.sin(angle) * 500
+            };
+        } else if (nearestPrey) {
+            // Chase
+            this.target = { ...nearestPrey.position };
+        } else {
+            // Random wander
+            if (Math.random() < 0.01) {
+                this.target = {
+                    x: this.position.x + (Math.random() - 0.5) * 1000,
+                    y: this.position.y + (Math.random() - 0.5) * 1000
+                };
+            }
+        }
+    }
+
     private static skinCache: Map<string, HTMLImageElement> = new Map();
 
     draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {

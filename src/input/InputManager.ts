@@ -35,7 +35,7 @@ export class InputManager {
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Space') {
                 this.onSplit();
-            } else if (e.code === 'KeyE') {
+            } else if (e.code === 'KeyE' || e.code === 'KeyW') {
                 this.onEject();
             }
         });

@@ -1,5 +1,6 @@
 import { Blob, Entity, Food, Virus, PowerUp, PowerUpType, Obstacle, ObstacleShape } from './Entities';
 import { SoundManager } from './SoundManager';
+import { QuadTree, Rectangle } from './QuadTree';
 
 export class Game {
     private canvas: HTMLCanvasElement;
@@ -23,13 +24,19 @@ export class Game {
     private gameMode: 'ffa' | 'team' = 'ffa';
     private playerName: string = 'Guest';
     private playerSkin: string = 'default';
+    private quadTree!: QuadTree;
+    private onKill: (eater: string, eaten: string) => void;
+    private particles: { x: number, y: number, radius: number, alpha: number, color: string }[] = [];
 
-    constructor(canvas: HTMLCanvasElement, onGameOver: (stats: { mass: number }) => void) {
+    constructor(canvas: HTMLCanvasElement, onGameOver: (stats: { mass: number }) => void, onKill: (eater: string, eaten: string) => void) {
         this.canvas = canvas;
         this.ctx = canvas.getContext('2d')!;
         this.onGameOver = onGameOver;
+        this.onKill = onKill;
         this.resize();
         window.addEventListener('resize', () => this.resize());
+
+        this.quadTree = new QuadTree(new Rectangle(0, 0, this.worldSize / 2, this.worldSize / 2), 10);
 
 
         // Initial food
@@ -138,14 +145,9 @@ export class Game {
 
         this.entities.forEach(entity => {
             if (entity instanceof Blob) {
+                entity.decay(dt);
                 if (entity.type === 'bot') {
-                    // Simple bot logic: wander around
-                    if (Math.random() < 0.01) {
-                        entity.target = {
-                            x: entity.position.x + (Math.random() - 0.5) * 500,
-                            y: entity.position.y + (Math.random() - 0.5) * 500
-                        };
-                    }
+                    entity.updateAI(this.entities, dt);
                 } else if (entity.type === 'player') {
                     // Follow mouse
                     entity.target = this.mouseToWorld(this.mousePos.x, this.mousePos.y);
@@ -163,6 +165,16 @@ export class Game {
             const halfSize = this.worldSize / 2;
             entity.position.x = Math.max(-halfSize + entity.radius, Math.min(halfSize - entity.radius, entity.position.x));
             entity.position.y = Math.max(-halfSize + entity.radius, Math.min(halfSize - entity.radius, entity.position.y));
+        });
+
+        this.quadTree.clear();
+        this.entities.forEach(e => this.quadTree.insert(e));
+
+        // Update particles
+        this.particles = this.particles.filter(p => p.alpha > 0.01);
+        this.particles.forEach(p => {
+            p.radius += 2;
+            p.alpha *= 0.9;
         });
 
         // Handle collisions
@@ -204,158 +216,119 @@ export class Game {
     }
 
     private checkCollisions() {
-        const food = this.entities.filter(e => e instanceof Food || e instanceof PowerUp) as (Food | PowerUp)[];
-        const bots = this.entities.filter(e => e instanceof Blob && e.type === 'bot') as Blob[];
-        const viruses = this.entities.filter(e => e instanceof Virus) as Virus[];
+        const blobs = this.entities.filter(e => e instanceof Blob) as Blob[];
 
-        this.playerBlobs.forEach(blob => {
-            // Eat food
-            for (let i = food.length - 1; i >= 0; i--) {
-                const item = food[i];
-                const dx = blob.position.x - item.position.x;
-                const dy = blob.position.y - item.position.y;
+        blobs.forEach(blob => {
+            // Find nearby entities using QuadTree
+            const range = new Rectangle(blob.position.x, blob.position.y, blob.radius * 2, blob.radius * 2);
+            const targets = this.quadTree.query(range);
+
+            targets.forEach(target => {
+                if (blob === target) return;
+
+                const dx = blob.position.x - target.position.x;
+                const dy = blob.position.y - target.position.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
-                if (dist < blob.radius) {
-                    if (item instanceof PowerUp) {
-                        SoundManager.playPowerUp();
-                        this.applyPowerUp(item.powerType);
-                        this.entities = this.entities.filter(e => e !== item);
-                        setTimeout(() => this.spawnPowerUps(1), 5000);
-                    } else if (item instanceof Food) {
-                        blob.addMass(item.mass);
-                        SoundManager.playEatFood();
-                        this.entities = this.entities.filter(e => e !== item);
-                        this.spawnFood(1);
-                    }
-                }
-            }
-
-            // Eat bots
-            bots.forEach(bot => {
-                if (this.gameMode === 'team' && blob.team === bot.team && blob.team !== undefined) return;
-
-                const dx = blob.position.x - bot.position.x;
-                const dy = blob.position.y - bot.position.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                if (dist < blob.radius && blob.mass > bot.mass * 1.1) {
-                    blob.addMass(bot.mass);
-                    SoundManager.playEatEnemy();
-                    this.entities = this.entities.filter(e => e !== bot);
-                    this.spawnBots(1);
-                } else if (dist < bot.radius && bot.mass > blob.mass * 1.1) {
-                    // Bot eats player blob
-                    this.playerBlobs = this.playerBlobs.filter(b => b !== blob);
-                    this.entities = this.entities.filter(e => e !== blob);
-                }
-            });
-
-            // Hit viruses
-            viruses.forEach(virus => {
-                const dx = blob.position.x - virus.position.x;
-                const dy = blob.position.y - virus.position.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                if (dist < blob.radius && blob.mass > virus.mass * 1.1) {
-                    // Shield power-up protects from splitting
-                    if (this.playerPowerUps.shield > 0) {
-                        blob.addMass(virus.mass / 2); // Still eat it but don't explode
-                    } else {
-                        this.explodeBlob(blob);
-                    }
-                    // Virus disappears and respawns
-                    this.entities = this.entities.filter(e => e !== virus);
-                    this.spawnViruses(1);
-                }
-            });
-
-            // Merge with other player blobs
-            this.playerBlobs.forEach(other => {
-                if (blob === other) return;
-                // Important: Ensure blob is still in the game (hasn't been eaten by another one in this frame loop)
-                if (!this.playerBlobs.includes(blob) || !this.playerBlobs.includes(other)) return;
-
-                const dx = blob.position.x - other.position.x;
-                const dy = blob.position.y - other.position.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                const now = Date.now();
-                const canMerge = (now - blob.splitTimestamp > 15000) && (now - other.splitTimestamp > 15000);
-
-                const minClearance = blob.radius + other.radius;
-
-                if (canMerge) {
-                    if (dist < minClearance * 0.8) {
-                        // Make the larger or elder blob the eater to be consistent
-                        if (blob.mass >= other.mass) {
-                            blob.addMass(other.mass);
-                            SoundManager.playMerge();
-                            this.playerBlobs = this.playerBlobs.filter(b => b !== other);
-                            this.entities = this.entities.filter(e => e !== other);
+                // 1. Eat food/powerups
+                if (target instanceof Food || target instanceof PowerUp) {
+                    if (dist < blob.radius) {
+                        if (target instanceof PowerUp) {
+                            SoundManager.playPowerUp();
+                            this.applyPowerUp(target.powerType);
+                            this.entities = this.entities.filter(e => e !== target);
+                            setTimeout(() => this.spawnPowerUps(1), 5000);
+                        } else if (target instanceof Food) {
+                            blob.addMass(target.mass);
+                            SoundManager.playEatFood();
+                            this.entities = this.entities.filter(e => e !== target);
+                            this.spawnFood(1);
                         }
                     }
-                } else if (dist < minClearance) {
-                    // Collision/Pushing logic to prevent overlap
-                    // Ensure dist is not strictly 0 to avoid division by zero
-                    const safeDist = dist === 0 ? 0.01 : dist;
-                    const angle = Math.atan2(dy, dx);
-                    const pushDist = minClearance - safeDist;
-
-                    // Push both apart evenly, very firmly (0.5 means they resolve the overlap almost instantly)
-                    const pushFactor = 0.5;
-                    blob.position.x += Math.cos(angle) * pushDist * 0.5 * pushFactor;
-                    blob.position.y += Math.sin(angle) * pushDist * 0.5 * pushFactor;
-                    other.position.x -= Math.cos(angle) * pushDist * 0.5 * pushFactor;
-                    other.position.y -= Math.sin(angle) * pushDist * 0.5 * pushFactor;
                 }
-            });
 
-            // Hit obstacles (Physical blocking)
-            this.obstacles.forEach(obs => {
-                const dx = blob.position.x - obs.position.x;
-                const dy = blob.position.y - obs.position.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
+                // 2. Interaction with other Blobs (Eating or Colliding)
+                else if (target instanceof Blob) {
+                    const sameTeam = this.gameMode === 'team' && blob.team === target.team && blob.team !== undefined;
+                    const bothPlayer = blob.type === 'player' && target.type === 'player';
 
-                // Simple circle-based collision for all shapes for now
-                const minClearance = blob.radius + obs.radius;
-                if (dist < minClearance) {
-                    const angle = Math.atan2(dy, dx);
-                    blob.position.x = obs.position.x + Math.cos(angle) * minClearance;
-                    blob.position.y = obs.position.y + Math.sin(angle) * minClearance;
+                    if (!sameTeam && dist < blob.radius && blob.mass > target.mass * 1.1) {
+                        // Blob eats target
+                        const eaterName = blob.name || (blob.type === 'player' ? this.playerName : 'Bot');
+                        const eatenName = target.name || (target instanceof Blob ? (target.type === 'player' ? 'Player' : 'Bot') : 'Something');
 
-                    // Kill velocity in direction of wall
-                    const dot = blob.velocity.x * Math.cos(angle) + blob.velocity.y * Math.sin(angle);
-                    if (dot < 0) {
-                        blob.velocity.x -= Math.cos(angle) * dot;
-                        blob.velocity.y -= Math.sin(angle) * dot;
+                        if (target instanceof Blob) {
+                            this.onKill(eaterName, eatenName);
+                        }
+
+                        this.emitParticles(target.position.x, target.position.y, target.color);
+
+                        blob.addMass(target.mass);
+                        SoundManager.playEatEnemy();
+                        this.entities = this.entities.filter(e => e !== target);
+
+                        if (target.type === 'player') {
+                            this.playerBlobs = this.playerBlobs.filter(b => b !== target);
+                        } else {
+                            setTimeout(() => this.spawnBots(1), 2000);
+                        }
+                    } else if (bothPlayer) {
+                        // Merging or Pushing logic between player's own blobs
+                        const now = Date.now();
+                        const canMerge = (now - blob.splitTimestamp > 15000) && (now - target.splitTimestamp > 15000);
+                        const minClearance = blob.radius + target.radius;
+
+                        if (canMerge && dist < minClearance * 0.8) {
+                            if (blob.mass >= target.mass) {
+                                blob.addMass(target.mass);
+                                SoundManager.playMerge();
+                                this.playerBlobs = this.playerBlobs.filter(b => b !== target);
+                                this.entities = this.entities.filter(e => e !== target);
+                            }
+                        } else if (!canMerge && dist < minClearance) {
+                            const angle = Math.atan2(dy, dx);
+                            const pushDist = (minClearance - dist) * 0.5;
+                            blob.position.x += Math.cos(angle) * pushDist;
+                            blob.position.y += Math.sin(angle) * pushDist;
+                            target.position.x -= Math.cos(angle) * pushDist;
+                            target.position.y -= Math.sin(angle) * pushDist;
+                        }
                     }
                 }
-            });
-        });
 
-        // Bot vs Bot collisions
-        bots.forEach(bot => {
-            bots.forEach(other => {
-                if (bot === other) return;
-                if (this.gameMode === 'team' && bot.team === other.team && bot.team !== undefined) return;
+                // 3. Virus Interaction
+                else if (target instanceof Virus) {
+                    if (dist < blob.radius && blob.mass > target.mass * 1.1) {
+                        if (this.playerPowerUps.shield > 0 && blob.type === 'player') {
+                            blob.addMass(target.mass / 2);
+                        } else {
+                            this.explodeBlob(blob);
+                        }
+                        this.entities = this.entities.filter(e => e !== target);
+                        setTimeout(() => this.spawnViruses(1), 10000);
+                    }
+                }
 
-                const dx = bot.position.x - other.position.x;
-                const dy = bot.position.y - other.position.y;
-                const dist = Math.sqrt(dx * dx + dy * dy);
-
-                if (dist < bot.radius && bot.mass > other.mass * 1.1) {
-                    bot.addMass(other.mass);
-                    this.entities = this.entities.filter(e => e !== other);
-                    this.spawnBots(1);
+                // 4. Obstacle Interaction
+                else if (target instanceof Obstacle) {
+                    const minClearance = blob.radius + target.radius;
+                    if (dist < minClearance) {
+                        const angle = Math.atan2(dy, dx);
+                        blob.position.x = target.position.x + Math.cos(angle) * minClearance;
+                        blob.position.y = target.position.y + Math.sin(angle) * minClearance;
+                    }
                 }
             });
         });
 
         // Check for Game Over
-        if (this.playerBlobs.length === 0) {
+        if (this.playerBlobs.length === 0 && !this.isSpectating) {
             this.handleGameOver();
         }
+    }
+
+    private emitParticles(x: number, y: number, color: string) {
+        this.particles.push({ x, y, radius: 10, alpha: 0.6, color });
     }
 
     private handleGameOver() {
@@ -409,6 +382,18 @@ export class Game {
         this.entities.sort((a, b) => a.mass - b.mass).forEach(entity => {
             entity.draw(this.ctx, this.camera);
         });
+
+        // Draw particles
+        this.particles.forEach(p => {
+            this.ctx.beginPath();
+            this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+            this.ctx.strokeStyle = p.color;
+            this.ctx.globalAlpha = p.alpha;
+            this.ctx.lineWidth = 2;
+            this.ctx.stroke();
+            this.ctx.closePath();
+        });
+        this.ctx.globalAlpha = 1.0;
 
         this.obstacles.forEach(obs => {
             obs.draw(this.ctx, this.camera);
@@ -505,7 +490,9 @@ export class Game {
                     radius: 0,
                     color: blob.color,
                     type: 'player',
-                    name: blob.name
+                    name: blob.name,
+                    skin: blob.skin,
+                    team: blob.team
                 });
                 newBlobs.push(splitBlob);
             }

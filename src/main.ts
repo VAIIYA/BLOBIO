@@ -109,6 +109,8 @@ const observeBtn = document.getElementById('observeBtn') as HTMLButtonElement;
 const quitBtn = document.getElementById('quitBtn') as HTMLButtonElement;
 
 // Initial build
+const killFeed = document.getElementById('killFeed');
+
 game = new Game(canvas, async (stats: any) => {
   // Handle Game Over
   deathMass.textContent = stats.mass.toString();
@@ -124,6 +126,15 @@ game = new Game(canvas, async (stats: any) => {
     currentUser.level = Math.floor(currentUser.total_mass / 5000) + 1;
     await updateUserProfile(currentUser);
   }
+}, (eater: string, eaten: string) => {
+  if (!killFeed) return;
+  const item = document.createElement('div');
+  item.className = 'kill-item';
+  item.innerHTML = `<span class="eater">${eater}</span> ate <span class="eaten">${eaten}</span>`;
+  killFeed.appendChild(item);
+  setTimeout(() => {
+    if (item.parentNode) item.parentNode.removeChild(item);
+  }, 5000);
 });
 
 // Load existing map on startup
@@ -157,6 +168,7 @@ modeTeam?.addEventListener('click', () => {
 
 async function loadLeaderboards() {
   try {
+    await initSchema();
     const topMass = await getTopMassPlayers(5);
     if (massLeaderboard) {
       massLeaderboard.innerHTML = topMass.map((p, i) => `

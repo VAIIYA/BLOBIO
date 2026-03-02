@@ -5,6 +5,140 @@
   --glass: rgba(30, 41, 59, 0.7);
   --glass-border: rgba(255, 255, 255, 0.1);
   --neon-glow: 0 0 15px rgba(59, 130, 246, 0.5);
+  --success-glow: 0 0 20px rgba(20, 241, 149, 0.4);
+  --danger-glow: 0 0 20px rgba(239, 68, 68, 0.4);
+}
+
+.logo-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.main-logo-img {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.5));
+  animation: logoPulse 4s infinite ease-in-out;
+}
+
+@keyframes logoPulse {
+
+  0%,
+  100% {
+    transform: scale(1);
+    filter: drop-shadow(0 0 20px rgba(59, 130, 246, 0.5));
+  }
+
+  50% {
+    transform: scale(1.05);
+    filter: drop-shadow(0 0 40px rgba(59, 130, 246, 0.8));
+  }
+}
+
+/* Interstitial Ad */
+.interstitial-ad {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 0, 0, 0.95);
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  backdrop-filter: blur(10px);
+}
+
+.ad-content {
+  width: 90%;
+  max-width: 800px;
+  height: 80%;
+  max-height: 600px;
+  background: #1e293b;
+  border-radius: 20px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: 0 0 50px rgba(0, 0, 0, 0.5);
+}
+
+.ad-header {
+  padding: 15px 25px;
+  background: #0f172a;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.ad-label {
+  font-size: 12px;
+  color: #64748b;
+  letter-spacing: 2px;
+  font-weight: 700;
+}
+
+.ad-timer {
+  font-size: 14px;
+  color: var(--accent-color);
+  font-weight: 600;
+}
+
+.ad-body {
+  flex: 1;
+  background: #000;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.skip-ad-btn {
+  padding: 20px;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.skip-ad-btn:disabled {
+  background: #475569;
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.skip-ad-btn:not(:disabled):hover {
+  background: #2563eb;
+}
+
+.kill-notification {
+  position: absolute;
+  top: 15%;
+  left: 50%;
+  transform: translateX(-50%) scale(0.5);
+  background: rgba(0, 0, 0, 0.8);
+  color: #14f195;
+  padding: 10px 30px;
+  border-radius: 50px;
+  font-weight: 900;
+  font-size: 24px;
+  letter-spacing: 2px;
+  border: 2px solid #14f195;
+  box-shadow: var(--success-glow);
+  pointer-events: none;
+  z-index: 3000;
+  opacity: 0;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+.kill-notification.show {
+  opacity: 1;
+  transform: translateX(-50%) scale(1);
 }
 
 body {
@@ -1147,11 +1281,25 @@ h1 {
 }
 
 @keyframes slideInRight {
-  from { transform: translateX(30px); opacity: 0; }
-  to { transform: translateX(0); opacity: 1; }
+  from {
+    transform: translateX(30px);
+    opacity: 0;
+  }
+
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
 }
 
 @keyframes fadeOut {
-  from { opacity: 1; transform: translateY(0); }
-  to { opacity: 0; transform: translateY(-10px); }
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  to {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
 }

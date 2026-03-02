@@ -24,6 +24,8 @@ const killLeaderboard = document.getElementById('killLeaderboard') as HTMLDivEle
 const modeFFA = document.getElementById('modeFFA') as HTMLDivElement;
 const modeTeam = document.getElementById('modeTeam') as HTMLDivElement;
 let gameMode: 'ffa' | 'team' = 'ffa';
+let currentLevel = 'classic';
+const mapSelection = document.getElementById('mapSelection');
 
 const scoreValue = document.getElementById('scoreValue') as HTMLSpanElement;
 
@@ -107,35 +109,57 @@ const deathTime = document.getElementById('deathTime') as HTMLSpanElement;
 const respawnBtn = document.getElementById('respawnBtn') as HTMLButtonElement;
 const observeBtn = document.getElementById('observeBtn') as HTMLButtonElement;
 const quitBtn = document.getElementById('quitBtn') as HTMLButtonElement;
+const interstitialAd = document.getElementById('interstitialAd') as HTMLDivElement;
+const adTimerDisplay = document.getElementById('adTimer') as HTMLSpanElement;
+const skipAdBtn = document.getElementById('skipAdBtn') as HTMLButtonElement;
 
 // Initial build
 const killFeed = document.getElementById('killFeed');
 
 game = new Game(canvas, async (stats: any) => {
-  // Handle Game Over
-  deathMass.textContent = stats.mass.toString();
-  deathTime.textContent = `${stats.timeAlive}s`;
-  deathPopup.style.display = 'flex';
-
   if (currentUser) {
     currentUser.losses += 1;
     currentUser.total_mass += stats.mass;
     if (stats.mass > (currentUser.max_mass || 0)) currentUser.max_mass = stats.mass;
     if (stats.kills) currentUser.kills = (currentUser.kills || 0) + stats.kills;
-
     currentUser.level = Math.floor(currentUser.total_mass / 5000) + 1;
-    await updateUserProfile(currentUser);
   }
-}, (eater: string, eaten: string) => {
+
+  // Show Interstitial Ad before Death Popup
+  showInterstitial(() => {
+    deathMass.textContent = stats.mass.toString();
+    deathTime.textContent = `${stats.timeAlive}s`;
+    deathPopup.style.display = 'flex';
+  });
+}, (eater, eaten) => {
   if (!killFeed) return;
   const item = document.createElement('div');
   item.className = 'kill-item';
   item.innerHTML = `<span class="eater">${eater}</span> ate <span class="eaten">${eaten}</span>`;
   killFeed.appendChild(item);
+
+  // Check for player kill
+  const currentPlayerName = playerNameInput.value || 'Guest';
+  if (eater === currentPlayerName) {
+    showComboNotification('NICE KILL!');
+  }
+
   setTimeout(() => {
     if (item.parentNode) item.parentNode.removeChild(item);
   }, 5000);
 });
+
+function showComboNotification(text: string) {
+  const notify = document.createElement('div');
+  notify.className = 'kill-notification';
+  notify.textContent = text;
+  document.body.appendChild(notify);
+  setTimeout(() => notify.classList.add('show'), 10);
+  setTimeout(() => {
+    notify.classList.remove('show');
+    setTimeout(() => notify.remove(), 500);
+  }, 2000);
+}
 
 // Load existing map on startup
 const initialMap = localStorage.getItem('blobio_custom_map');
@@ -162,8 +186,24 @@ modeFFA?.addEventListener('click', () => {
 
 modeTeam?.addEventListener('click', () => {
   modeTeam.classList.add('active');
-  modeFFA?.classList.remove('active');
   gameMode = 'team';
+});
+
+mapSelection?.addEventListener('click', (e) => {
+  const target = (e.target as HTMLElement).closest('.mode-option') as HTMLElement;
+  if (target && target.dataset.level) {
+    document.querySelectorAll('#mapSelection .mode-option').forEach(opt => opt.classList.remove('active'));
+    target.classList.add('active');
+    currentLevel = target.dataset.level;
+    if (game) {
+      if (currentLevel === 'custom') {
+        const savedMap = localStorage.getItem('blobio_custom_map');
+        if (savedMap) game.loadMap(JSON.parse(savedMap));
+      } else {
+        game.loadLevel(currentLevel);
+      }
+    }
+  }
 });
 
 async function loadLeaderboards() {
@@ -207,6 +247,7 @@ const createMapBtn = document.getElementById('createMapBtn') as HTMLButtonElemen
 const editorToolbar = document.getElementById('editorToolbar') as HTMLDivElement;
 const mapSizeInput = document.getElementById('mapSizeInput') as HTMLInputElement;
 const toolBtns = document.querySelectorAll('.tool-btn:not(.danger):not(.success)');
+const toolShapes = ['RECT', 'CIRCLE', 'TRIANGLE', 'BOUNCE', 'ZONE'];
 const clearMapBtn = document.getElementById('clearMapBtn');
 const saveMapBtn = document.getElementById('saveMapBtn');
 
@@ -407,7 +448,7 @@ saveMapBtn?.addEventListener('click', () => {
     editorToolbar.style.display = 'none';
     menu.style.display = 'flex';
     menu.style.opacity = '1';
-    alert('Map saved!');
+    alert('Map saved to LocalStorage!');
   }
 });
 
@@ -566,7 +607,15 @@ function startGame() {
     game.setPlayerName(name);
     game.setPlayerSkin(selectedSkin);
     game.setEditorMode(false);
-    (game as any).setGameMode(gameMode); // We'll add this method next
+    game.setGameMode(gameMode);
+
+    if (currentLevel === 'custom') {
+      const savedMap = localStorage.getItem('blobio_custom_map');
+      if (savedMap) game.loadMap(JSON.parse(savedMap));
+    } else {
+      game.loadLevel(currentLevel);
+    }
+
     game.respawn();
   }
 
@@ -650,6 +699,38 @@ quitBtn.addEventListener('click', () => {
 });
 
 playBtn.addEventListener('click', startGame);
+
+// --- Ad Logic ---
+function showInterstitial(callback: () => void) {
+  if (!interstitialAd) {
+    callback();
+    return;
+  }
+
+  interstitialAd.style.display = 'flex';
+  let timeLeft = 3;
+  skipAdBtn.disabled = true;
+  adTimerDisplay.textContent = `Skipping in ${timeLeft}s...`;
+
+  const timer = setInterval(() => {
+    timeLeft -= 1;
+    if (timeLeft <= 0) {
+      clearInterval(timer);
+      adTimerDisplay.textContent = 'Ad ready to skip';
+      skipAdBtn.disabled = false;
+    } else {
+      adTimerDisplay.textContent = `Skipping in ${timeLeft}s...`;
+    }
+  }, 1000);
+
+  const onSkip = () => {
+    interstitialAd.style.display = 'none';
+    skipAdBtn.removeEventListener('click', onSkip);
+    callback();
+  };
+
+  skipAdBtn.addEventListener('click', onSkip);
+}
 
 // Register PWA service worker
 if ('serviceWorker' in navigator) {

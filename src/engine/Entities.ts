@@ -10,7 +10,7 @@ export interface EntityState {
     mass: number;
     radius: number;
     color: string;
-    type: 'player' | 'bot' | 'food' | 'virus' | 'obstacle';
+    type: 'player' | 'bot' | 'food' | 'virus' | 'obstacle' | 'bouncepad' | 'zone';
     name?: string;
     skin?: string;
     team?: 'red' | 'blue';
@@ -23,7 +23,7 @@ export abstract class Entity {
     mass: number;
     radius: number;
     color: string;
-    type: 'player' | 'bot' | 'food' | 'virus' | 'obstacle';
+    type: 'player' | 'bot' | 'food' | 'virus' | 'obstacle' | 'bouncepad' | 'zone';
     name?: string;
     skin?: string;
     team?: 'red' | 'blue';
@@ -79,48 +79,100 @@ export class Food extends Entity {
     }
 
     draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {
+        const time = Date.now() / 1000;
+        const pulse = 1 + Math.sin(time * 3) * 0.15; // Pulsing scale
+
+        ctx.save();
         ctx.beginPath();
-        ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
+        ctx.arc(this.position.x, this.position.y, this.radius * pulse, 0, Math.PI * 2);
+
+        // Add a subtle glow to food
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = this.color;
+
         ctx.fillStyle = this.color;
         ctx.fill();
         ctx.closePath();
+        ctx.restore();
     }
+}
+
+export interface PerimeterPoint {
+    x: number;
+    y: number;
+    vx: number;
+    vy: number;
 }
 
 export class Blob extends Entity {
     target: Vector = { x: 0, y: 0 };
     speed: number = 200;
-
     splitTimestamp: number = 0;
+
+    // Jelly Physics
+    perimeterPoints: PerimeterPoint[] = [];
+    numPoints: number = 16;
+    elasticity: number = 0.3; // Spring strength
+    dampening: number = 0.9;  // Friction for points
+    wobbleIntensity: number = 1.0;
 
     constructor(state: EntityState) {
         super(state);
         this.calculateRadius();
         this.splitTimestamp = Date.now();
+        this.initPerimeter();
+    }
+
+    private initPerimeter() {
+        this.perimeterPoints = [];
+        for (let i = 0; i < this.numPoints; i++) {
+            const angle = (i / this.numPoints) * Math.PI * 2;
+            this.perimeterPoints.push({
+                x: Math.cos(angle) * this.radius,
+                y: Math.sin(angle) * this.radius,
+                vx: 0,
+                vy: 0
+            });
+        }
+    }
+
+    private updatePerimeter(dt: number) {
+        // Points update scaled by dt (assuming default ~60fps for base values)
+        const timeScale = dt * 60;
+        for (let i = 0; i < this.numPoints; i++) {
+            const pt = this.perimeterPoints[i];
+            const angle = (i / this.numPoints) * Math.PI * 2;
+            const idealX = Math.cos(angle) * this.radius;
+            const idealY = Math.sin(angle) * this.radius;
+            const ax = (idealX - pt.x) * this.elasticity * timeScale;
+            const ay = (idealY - pt.y) * this.elasticity * timeScale;
+            const lagX = -this.velocity.x * 0.05 * timeScale;
+            const lagY = -this.velocity.y * 0.05 * timeScale;
+            pt.vx = (pt.vx + ax + lagX) * this.dampening;
+            pt.vy = (pt.vy + ay + lagY) * this.dampening;
+            pt.x += pt.vx;
+            pt.y += pt.vy;
+        }
     }
 
     update(dt: number) {
-        // Basic movement towards target
         const dx = this.target.x - this.position.x;
         const dy = this.target.y - this.position.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
 
         if (dist > 5) {
             const angle = Math.atan2(dy, dx);
-            // Speed decreases as mass increases
             const currentSpeed = this.speed / Math.pow(this.mass, 0.1);
-
-            // Blend target velocity with current velocity to allow impulses (split/eject) to persist
             const targetVelX = Math.cos(angle) * currentSpeed;
             const targetVelY = Math.sin(angle) * currentSpeed;
-
-            // Smoothly move towards target velocity
             this.velocity.x += (targetVelX - this.velocity.x) * 0.1;
             this.velocity.y += (targetVelY - this.velocity.y) * 0.1;
         }
 
+        this.updatePerimeter(dt);
         super.update(dt);
     }
+
 
     public decay(dt: number) {
         // Only decay if mass is significant (e.g., > 100)
@@ -169,15 +221,28 @@ export class Blob extends Entity {
                     }
                 }
             } else if (entity instanceof Virus) {
-                if (this.mass > entity.mass * 1.1 && dist < threatRadius) {
-                    // Virus is a threat to large blobs
-                    if (dist < minDistThreat) {
+                // Large blobs avoid viruses, small blobs hide in them
+                if (this.mass > entity.mass * 1.1) {
+                    if (dist < threatRadius && dist < minDistThreat) {
                         minDistThreat = dist;
                         nearestThreat = entity;
+                    }
+                } else if (dist < 200) {
+                    // Small blobs might "hide" near viruses if being chased
+                    if (nearestThreat) {
+                        this.target = { ...entity.position };
                     }
                 }
             }
         }
+
+        // Boundary awareness
+        const halfSize = 7500; // worldSize / 2
+        const margin = 500;
+        if (this.position.x > halfSize - margin) this.target.x = -halfSize;
+        if (this.position.x < -halfSize + margin) this.target.x = halfSize;
+        if (this.position.y > halfSize - margin) this.target.y = -halfSize;
+        if (this.position.y < -halfSize + margin) this.target.y = halfSize;
 
         if (nearestThreat) {
             // Flee
@@ -204,8 +269,35 @@ export class Blob extends Entity {
 
     private static skinCache: Map<string, HTMLImageElement> = new Map();
 
-    draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {
+    // Integrated Draw Method with Skins & Jelly Physics
+    draw(ctx: CanvasRenderingContext2D, camera: { x: number, y: number, scale: number }) {
+        if (this.perimeterPoints.length === 0) return;
+
         ctx.save();
+        ctx.beginPath();
+
+        const first = this.perimeterPoints[0];
+        const last = this.perimeterPoints[this.numPoints - 1];
+
+        ctx.moveTo(
+            this.position.x + (first.x + last.x) / 2,
+            this.position.y + (first.y + last.y) / 2
+        );
+
+        for (let i = 0; i < this.numPoints; i++) {
+            const p1 = this.perimeterPoints[i];
+            const p2 = this.perimeterPoints[(i + 1) % this.numPoints];
+            const midX = (p1.x + p2.x) / 2;
+            const midY = (p1.y + p2.y) / 2;
+            ctx.quadraticCurveTo(
+                this.position.x + p1.x,
+                this.position.y + p1.y,
+                this.position.x + midX,
+                this.position.y + midY
+            );
+        }
+
+        ctx.closePath();
 
         // Check for image skin
         const imageSkins = ['doge', 'bunny', 'alien_face'];
@@ -218,8 +310,7 @@ export class Blob extends Entity {
             }
 
             if (img.complete && img.naturalWidth !== 0) {
-                ctx.beginPath();
-                ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
+                ctx.save();
                 ctx.clip();
                 ctx.drawImage(
                     img,
@@ -228,22 +319,18 @@ export class Blob extends Entity {
                     this.radius * 2,
                     this.radius * 2
                 );
-                ctx.closePath();
-
-                // Draw border for image skins
-                ctx.beginPath();
-                ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
-                ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.3)';
-                ctx.lineWidth = this.team ? 6 : 2;
-                ctx.stroke();
-                ctx.closePath();
+                ctx.restore();
             } else {
-                // Fallback while loading
-                this.drawDefault(ctx);
+                this.applyStyle(ctx);
             }
         } else {
-            this.drawDefault(ctx);
+            this.applyStyle(ctx);
         }
+
+        // Standard outline
+        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = this.team ? 6 / camera.scale : 2 / camera.scale;
+        ctx.stroke();
 
         // Draw name
         if (this.name) {
@@ -256,13 +343,22 @@ export class Blob extends Entity {
             ctx.fillText(this.name, this.position.x, this.position.y);
         }
 
+        // Shield effect
+        if ((this as any).hasShield) {
+            ctx.beginPath();
+            ctx.arc(this.position.x, this.position.y, this.radius * 1.2, 0, Math.PI * 2);
+            ctx.strokeStyle = '#22d3ee';
+            ctx.lineWidth = 4 / camera.scale;
+            ctx.setLineDash([10, 5]);
+            ctx.lineDashOffset = (Date.now() / 50) % 15;
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
         ctx.restore();
     }
 
-    private drawDefault(ctx: CanvasRenderingContext2D) {
-        ctx.beginPath();
-        ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
-
+    private applyStyle(ctx: CanvasRenderingContext2D) {
         if (this.skin === 'neon') {
             ctx.fillStyle = this.color;
             ctx.shadowBlur = 20;
@@ -275,11 +371,6 @@ export class Blob extends Entity {
             grad.addColorStop(0, '#4ade80');
             grad.addColorStop(1, '#166534');
             ctx.fillStyle = grad;
-        } else if (this.skin === 'core') {
-            ctx.fillStyle = '#1e293b';
-            ctx.strokeStyle = this.color;
-            ctx.lineWidth = 4;
-            ctx.stroke();
         } else if (this.skin === 'ghost') {
             ctx.fillStyle = this.color;
             ctx.globalAlpha = 0.5;
@@ -288,12 +379,9 @@ export class Blob extends Entity {
             ctx.shadowBlur = 10;
             ctx.shadowColor = this.color;
         }
-
         ctx.fill();
-        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.2)';
-        ctx.lineWidth = this.team ? 6 : 2;
-        ctx.stroke();
-        ctx.closePath();
+        ctx.globalAlpha = 1.0;
+        ctx.shadowBlur = 0;
     }
 }
 
@@ -318,9 +406,10 @@ export class Virus extends Entity {
         const spikes = 20;
         const innerRadius = this.radius * 0.8;
         const outerRadius = this.radius;
+        const rotation = (Date.now() / 2000) % (Math.PI * 2);
 
         for (let i = 0; i < spikes * 2; i++) {
-            const angle = (i * Math.PI) / spikes;
+            const angle = rotation + (i * Math.PI) / spikes;
             const r = i % 2 === 0 ? outerRadius : innerRadius;
             const x = this.position.x + Math.cos(angle) * r;
             const y = this.position.y + Math.sin(angle) * r;
@@ -329,11 +418,22 @@ export class Virus extends Entity {
         }
 
         ctx.closePath();
+
+        // Semi-transparent fill with glow
         ctx.fillStyle = this.color;
+        ctx.globalAlpha = 0.8;
         ctx.fill();
+
         ctx.strokeStyle = '#15803d';
-        ctx.lineWidth = 3;
+        ctx.lineWidth = 3 / _camera.scale;
         ctx.stroke();
+
+        // Inner detail circle
+        ctx.beginPath();
+        ctx.arc(this.position.x, this.position.y, innerRadius * 0.8, 0, Math.PI * 2);
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fill();
+
         ctx.restore();
     }
 }
@@ -447,6 +547,78 @@ export class Obstacle extends Entity {
 
         ctx.fill();
         ctx.stroke();
+        ctx.restore();
+    }
+}
+
+export class BouncePad extends Entity {
+    constructor(id: string, x: number, y: number, radius: number = 60) {
+        super({
+            id,
+            position: { x, y },
+            velocity: { x: 0, y: 0 },
+            mass: 500,
+            radius,
+            color: '#14f195',
+            type: 'bouncepad'
+        });
+    }
+
+    draw(ctx: CanvasRenderingContext2D, _camera: any) {
+        ctx.save();
+        const pulse = 1 + Math.sin(Date.now() / 200) * 0.1;
+
+        ctx.beginPath();
+        ctx.arc(this.position.x, this.position.y, this.radius * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = this.color;
+        ctx.shadowBlur = 15;
+        ctx.shadowColor = this.color;
+        ctx.fill();
+
+        ctx.strokeStyle = 'white';
+        ctx.lineWidth = 3;
+        ctx.stroke();
+
+        // Icon
+        ctx.fillStyle = 'white';
+        ctx.font = 'bold 20px Inter';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText('↑', this.position.x, this.position.y);
+
+        ctx.restore();
+    }
+}
+
+export class EffectZone extends Entity {
+    effectType: 'slow' | 'fast';
+    width: number;
+    height: number;
+
+    constructor(id: string, x: number, y: number, width: number, height: number, effectType: 'slow' | 'fast') {
+        super({
+            id,
+            position: { x, y },
+            velocity: { x: 0, y: 0 },
+            mass: 0,
+            radius: Math.max(width, height) / 2,
+            color: effectType === 'slow' ? 'rgba(239, 68, 68, 0.2)' : 'rgba(16, 185, 129, 0.2)',
+            type: 'zone'
+        });
+        this.effectType = effectType;
+        this.width = width;
+        this.height = height;
+    }
+
+    draw(ctx: CanvasRenderingContext2D, _camera: any) {
+        ctx.save();
+        ctx.fillStyle = this.color;
+        ctx.fillRect(this.position.x - this.width / 2, this.position.y - this.height / 2, this.width, this.height);
+
+        ctx.strokeStyle = this.effectType === 'slow' ? '#ef4444' : '#10b981';
+        ctx.setLineDash([5, 5]);
+        ctx.strokeRect(this.position.x - this.width / 2, this.position.y - this.height / 2, this.width, this.height);
+        ctx.setLineDash([]);
         ctx.restore();
     }
 }

@@ -1,4 +1,4 @@
-import { Blob, Entity, Food, Virus, PowerUp, PowerUpType, Obstacle, ObstacleShape } from './Entities';
+import { Blob, Entity, Food, Virus, PowerUp, PowerUpType, Obstacle, ObstacleShape, BouncePad, EffectZone } from './Entities';
 import { SoundManager } from './SoundManager';
 import { QuadTree, Rectangle } from './QuadTree';
 
@@ -16,7 +16,7 @@ export class Game {
         speed: 0,
         shield: 0
     };
-    private obstacles: Obstacle[] = [];
+    private obstacles: (Obstacle | BouncePad | EffectZone)[] = [];
     private isEditorMode: boolean = false;
     private selectedShape: ObstacleShape = 'RECT';
     private isSpectating: boolean = false;
@@ -44,7 +44,7 @@ export class Game {
         // Initial bots
         this.spawnBots(15);
         // Initial viruses
-        this.spawnViruses(20);
+        this.spawnViruses(150);
         // Initial power-ups
         this.spawnPowerUps(8);
 
@@ -97,8 +97,9 @@ export class Game {
 
     private spawnViruses(count: number) {
         for (let i = 0; i < count; i++) {
-            const x = (Math.random() - 0.5) * (this.worldSize - 200);
-            const y = (Math.random() - 0.5) * (this.worldSize - 200);
+            // Spawn more viruses towards the playable areas (center 10k)
+            const x = (Math.random() - 0.5) * 10000;
+            const y = (Math.random() - 0.5) * 10000;
             const masses = [40, 70, 110, 180]; // Small, Medium, Large, Extra Large
             const mass = masses[Math.floor(Math.random() * masses.length)];
             this.entities.push(new Virus(`virus-${Date.now()}-${i}`, x, y, mass));
@@ -141,7 +142,12 @@ export class Game {
 
         // Update power-up timers
         if (this.playerPowerUps.speed > 0) this.playerPowerUps.speed -= dt * 1000;
-        if (this.playerPowerUps.shield > 0) this.playerPowerUps.shield -= dt * 1000;
+        if (this.playerPowerUps.shield > 0) {
+            this.playerPowerUps.shield -= dt * 1000;
+            this.playerBlobs.forEach(b => (b as any).hasShield = true);
+        } else {
+            this.playerBlobs.forEach(b => (b as any).hasShield = false);
+        }
 
         this.entities.forEach(entity => {
             if (entity instanceof Blob) {
@@ -316,6 +322,34 @@ export class Game {
                         const angle = Math.atan2(dy, dx);
                         blob.position.x = target.position.x + Math.cos(angle) * minClearance;
                         blob.position.y = target.position.y + Math.sin(angle) * minClearance;
+                        // Kill some velocity on impact
+                        blob.velocity.x *= 0.8;
+                        blob.velocity.y *= 0.8;
+                    }
+                }
+
+                // 5. BouncePad Interaction
+                else if (target instanceof BouncePad) {
+                    if (dist < blob.radius + target.radius) {
+                        const angle = Math.atan2(blob.position.y - target.position.y, blob.position.x - target.position.x);
+                        blob.velocity.x = Math.cos(angle) * 1200;
+                        blob.velocity.y = Math.sin(angle) * 1200;
+                        SoundManager.playSplit(); // Reuse split sound for bounce
+                    }
+                }
+
+                // 6. Zone Interaction
+                else if (target instanceof EffectZone) {
+                    const inX = Math.abs(blob.position.x - target.position.x) < target.width / 2;
+                    const inY = Math.abs(blob.position.y - target.position.y) < target.height / 2;
+                    if (inX && inY) {
+                        if (target.effectType === 'slow') {
+                            blob.velocity.x *= 0.95;
+                            blob.velocity.y *= 0.95;
+                        } else if (target.effectType === 'fast') {
+                            blob.velocity.x *= 1.05;
+                            blob.velocity.y *= 1.05;
+                        }
                     }
                 }
             });
@@ -373,14 +407,25 @@ export class Game {
         this.ctx.scale(this.camera.scale, this.camera.scale);
         this.ctx.translate(-this.camera.x, -this.camera.y);
 
+        this.drawBackground();
         this.drawGrid();
 
         this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
         this.ctx.lineWidth = 10;
         this.ctx.strokeRect(-this.worldSize / 2, -this.worldSize / 2, this.worldSize, this.worldSize);
 
-        this.entities.sort((a, b) => a.mass - b.mass).forEach(entity => {
+        // Layered rendering: Draw smaller entities first, then blobs, then viruses
+        // This allows small players to hide under viruses
+        const sortedEntities = [...this.entities].sort((a, b) => a.mass - b.mass);
+
+        // Draw non-virus entities
+        sortedEntities.filter(e => e.type !== 'virus').forEach(entity => {
             entity.draw(this.ctx, this.camera);
+        });
+
+        // Draw viruses on top (so small blobs hide underneath)
+        sortedEntities.filter(e => e.type === 'virus').forEach(virus => {
+            virus.draw(this.ctx, this.camera);
         });
 
         // Draw particles
@@ -400,6 +445,67 @@ export class Game {
         });
 
         this.ctx.restore();
+
+        // UI elements (unscaled)
+        this.drawMinimap();
+    }
+
+    private drawBackground() {
+        const layers = [
+            { count: 100, size: 2, speed: 0.1, color: 'rgba(255, 255, 255, 0.4)' },
+            { count: 50, size: 4, speed: 0.3, color: 'rgba(255, 255, 255, 0.6)' },
+            { count: 20, size: 6, speed: 0.6, color: 'rgba(255, 255, 255, 0.8)' }
+        ];
+
+        // We use a fixed seed based on position to keep stars consistent
+        layers.forEach(layer => {
+            this.ctx.fillStyle = layer.color;
+            for (let i = 0; i < layer.count; i++) {
+                // Pseudo-random but deterministic based on loop index
+                const x = ((Math.sin(i * 123) * 0.5 + 0.5) * this.worldSize * 2 - this.worldSize) - (this.camera.x * layer.speed);
+                const y = ((Math.cos(i * 456) * 0.5 + 0.5) * this.worldSize * 2 - this.worldSize) - (this.camera.y * layer.speed);
+
+                // Only draw if within reasonable distance of camera
+                if (Math.abs(x - this.camera.x) < 2000 / this.camera.scale &&
+                    Math.abs(y - this.camera.y) < 2000 / this.camera.scale) {
+                    this.ctx.beginPath();
+                    this.ctx.arc(x, y, layer.size / this.camera.scale, 0, Math.PI * 2);
+                    this.ctx.fill();
+                }
+            }
+        });
+    }
+
+    private drawMinimap() {
+        const size = 150;
+        const padding = 20;
+        const x = this.canvas.width - size - padding;
+        const y = padding;
+
+        // Background
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.lineWidth = 2;
+        this.ctx.fillRect(x, y, size, size);
+        this.ctx.strokeRect(x, y, size, size);
+
+        // Player Position
+        if (this.playerBlobs.length > 0) {
+            const px = ((this.camera.x / this.worldSize) + 0.5) * size;
+            const py = ((this.camera.y / this.worldSize) + 0.5) * size;
+
+            this.ctx.fillStyle = '#3b82f6';
+            this.ctx.beginPath();
+            this.ctx.arc(x + px, y + py, 4, 0, Math.PI * 2);
+            this.ctx.fill();
+
+            // Pulse effect for player on minimap
+            const pulse = (Math.sin(Date.now() / 200) * 0.5 + 0.5);
+            this.ctx.strokeStyle = `rgba(59, 130, 246, ${pulse})`;
+            this.ctx.beginPath();
+            this.ctx.arc(x + px, y + py, 8, 0, Math.PI * 2);
+            this.ctx.stroke();
+        }
     }
 
     private drawGrid() {
@@ -483,8 +589,8 @@ export class Game {
                     id: `player-${Date.now()}-${Math.random()}`,
                     position: { ...blob.position },
                     velocity: {
-                        x: Math.cos(angle) * 800,
-                        y: Math.sin(angle) * 800
+                        x: Math.cos(angle) * 1200, // Increased from 800
+                        y: Math.sin(angle) * 1200  // Increased from 800
                     },
                     mass: halfMass,
                     radius: 0,
@@ -505,7 +611,7 @@ export class Game {
 
     private explodeBlob(blob: Blob) {
         if (this.playerBlobs.length >= 16) return;
-        const maxPieces = 8;
+        const maxPieces = 16; // Increased from 8
         const canCreate = Math.min(maxPieces, 16 - this.playerBlobs.length);
         if (canCreate <= 1) return;
 
@@ -520,8 +626,8 @@ export class Game {
                 id: `player-explode-${Date.now()}-${i}`,
                 position: { ...blob.position },
                 velocity: {
-                    x: Math.cos(angle) * 500,
-                    y: Math.sin(angle) * 500
+                    x: Math.cos(angle) * 700, // Slightly more explosive
+                    y: Math.sin(angle) * 700
                 },
                 mass: pieceMass,
                 radius: 0,
@@ -571,13 +677,23 @@ export class Game {
     public setSelectedShape(shape: ObstacleShape) { this.selectedShape = shape; }
     public addObstacleAt(x: number, y: number) {
         const id = `obs-${Date.now()}`;
-        this.obstacles.push(new Obstacle(id, x, y, this.selectedShape, 200, 200));
+        if (this.selectedShape === 'BOUNCE' as any) {
+            this.obstacles.push(new BouncePad(id, x, y));
+        } else if (this.selectedShape === 'ZONE' as any) {
+            this.obstacles.push(new EffectZone(id, x, y, 400, 400, 'fast'));
+        } else {
+            this.obstacles.push(new Obstacle(id, x, y, this.selectedShape, 200, 200));
+        }
     }
     public removeObstacleAt(x: number, y: number) {
         this.obstacles = this.obstacles.filter(obs => {
             const dx = x - obs.position.x;
             const dy = y - obs.position.y;
-            return Math.sqrt(dx * dx + dy * dy) > obs.radius;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (obs instanceof EffectZone) {
+                return !(Math.abs(dx) < obs.width / 2 && Math.abs(dy) < obs.height / 2);
+            }
+            return dist > obs.radius;
         });
     }
     public clearMap() { this.obstacles = []; }
@@ -585,19 +701,57 @@ export class Game {
     public getMapData() {
         return {
             worldSize: this.worldSize,
-            obstacles: this.obstacles.map(o => ({
-                id: o.id, x: o.position.x, y: o.position.y,
-                shape: o.shape, width: o.width, height: o.height,
-                rotation: o.rotation, color: o.color
-            }))
+            obstacles: this.obstacles.map(o => {
+                const base = { id: o.id, x: o.position.x, y: o.position.y, type: o.type, color: o.color };
+                if (o instanceof Obstacle) {
+                    return { ...base, shape: o.shape, width: o.width, height: o.height, rotation: o.rotation };
+                }
+                if (o instanceof BouncePad) {
+                    return { ...base, radius: o.radius };
+                }
+                if (o instanceof EffectZone) {
+                    return { ...base, width: o.width, height: o.height, effectType: o.effectType };
+                }
+                return base;
+            })
         };
     }
     public loadMap(data: any) {
         if (data.worldSize) this.worldSize = data.worldSize;
+        this.obstacles = [];
         if (data.obstacles) {
-            this.obstacles = data.obstacles.map((o: any) =>
-                new Obstacle(o.id, o.x, o.y, o.shape, o.width, o.height, o.color, o.rotation)
-            );
+            this.obstacles = data.obstacles.map((o: any) => {
+                if (o.type === 'bouncepad') return new BouncePad(o.id, o.x, o.y, o.radius);
+                if (o.type === 'zone') return new EffectZone(o.id, o.x, o.y, o.width, o.height, o.effectType);
+                return new Obstacle(o.id, o.x, o.y, o.shape, o.width, o.height, o.color, o.rotation);
+            });
         }
+    }
+
+    // --- Level System ---
+    private levels: Record<string, any> = {
+        'default': { worldSize: 15000, obstacles: [] },
+        'the-core': {
+            worldSize: 5000,
+            obstacles: [
+                { id: 'c1', x: 0, y: 0, type: 'obstacle', shape: 'CIRCLE', width: 400, height: 400 },
+                { id: 'b1', x: 1000, y: 1000, type: 'bouncepad', radius: 100 },
+                { id: 'b2', x: -1000, y: -1000, type: 'bouncepad', radius: 100 }
+            ]
+        },
+        'the-bounce': {
+            worldSize: 8000,
+            obstacles: [
+                { id: 'bp1', x: 500, y: 500, type: 'bouncepad', radius: 80 },
+                { id: 'bp2', x: -500, y: -500, type: 'bouncepad', radius: 80 },
+                { id: 'z1', x: 0, y: 0, type: 'zone', width: 1000, height: 1000, effectType: 'fast' }
+            ]
+        }
+    };
+
+    public loadLevel(levelId: string) {
+        const data = this.levels[levelId] || this.levels['default'];
+        this.loadMap(data);
+        this.respawn();
     }
 }

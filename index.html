@@ -3,7 +3,7 @@
 
 <head>
   <meta charset="UTF-8" />
-  <link rel="icon" type="image/png" href="/pwa-192x192.png" />
+  <link rel="icon" type="image/png" href="/logo.png" />
   <meta name="viewport"
     content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -108,7 +108,9 @@
       </div>
 
       <div class="menu-card">
-        <h1>BLOBIO</h1>
+        <div class="logo-container">
+          <img src="/logo.png" alt="BLOBIO Logo" class="main-logo-img">
+        </div>
         <div id="authSection">
           <button class="solana-btn" id="loginBtn">Connect Solana Wallet</button>
           <p class="auth-hint">Or play as guest below</p>
@@ -128,11 +130,14 @@
           </label>
         </div>
 
-        <h4>Game Mode</h4>
-        <div class="mode-settings">
-          <div class="mode-option active" id="modeFFA" data-mode="ffa">FFA</div>
-          <div class="mode-option" id="modeTeam" data-mode="team">Team</div>
+        <h4>Select Level</h4>
+        <div id="mapSelection" class="mode-settings">
+          <div class="mode-option active" data-level="default">Classic</div>
+          <div class="mode-option" data-level="the-core">The Core</div>
+          <div class="mode-option" data-level="the-bounce">The Bounce</div>
         </div>
+
+        <h4>Game Mode</h4>
         <h4>Skin</h4>
         <div class="skin-options">
           <div class="skin-option active" data-skin="default" style="background: #3b82f6;"></div>
@@ -286,6 +291,42 @@
 
   </div>
   </div>
+  <!-- Interstitial Ad Overlay -->
+  <div id="interstitialAd" class="interstitial-ad" style="display: none;">
+    <div class="ad-content">
+      <div class="ad-header">
+        <span class="ad-label">ADVERTISEMENT</span>
+        <span id="adTimer" class="ad-timer">Skipping in 3s...</span>
+      </div>
+      <div class="ad-body">
+        <ins class="adsbygoogle" style="display:block;width:100%;height:100%" data-ad-client="ca-pub-8049952818757963"
+          data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
+        <script>
+          (adsbygoogle = window.adsbygoogle || []).push({});
+        </script>
+      </div>
+      <button id="skipAdBtn" class="skip-ad-btn" disabled>SKIP AD</button>
+    </div>
+  </div>
+
+  <!-- Interstitial Ad Overlay -->
+  <div id="interstitialAd" class="interstitial-ad" style="display: none;">
+    <div class="ad-content">
+      <div class="ad-header">
+        <span class="ad-label">ADVERTISEMENT</span>
+        <span id="adTimer" class="ad-timer">Skipping in 3s...</span>
+      </div>
+      <div class="ad-body">
+        <ins class="adsbygoogle" style="display:block;width:100%;height:100%" data-ad-client="ca-pub-8049952818757963"
+          data-ad-slot="8049952818" data-ad-format="auto" data-full-width-responsive="true"></ins>
+        <script>
+          (adsbygoogle = window.adsbygoogle || []).push({});
+        </script>
+      </div>
+      <button id="skipAdBtn" class="skip-ad-btn" disabled>SKIP AD</button>
+    </div>
+  </div>
+
   <script type="module" src="/src/main.ts"></script>
 </body>
 

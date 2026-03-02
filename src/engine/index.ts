@@ -40,22 +40,22 @@ export class Game {
 
 
         // Initial food
-        this.spawnFood(800);
+        this.spawnFood(5000);
         // Initial bots
-        this.spawnBots(15);
+        this.spawnBots(40);
         // Initial viruses
-        this.spawnViruses(150);
+        this.spawnViruses(400);
         // Initial power-ups
-        this.spawnPowerUps(8);
+        this.spawnPowerUps(15);
 
         requestAnimationFrame(this.loop.bind(this));
 
         // Passive food spawning
         setInterval(() => {
-            if (this.entities.filter(e => e instanceof Food).length < 6000) {
-                this.spawnFood(50);
+            if (this.entities.filter(e => e instanceof Food).length < 12000) {
+                this.spawnFood(100);
             }
-        }, 200);
+        }, 150);
     }
 
     private resize() {
@@ -414,29 +414,43 @@ export class Game {
         this.ctx.lineWidth = 10;
         this.ctx.strokeRect(-this.worldSize / 2, -this.worldSize / 2, this.worldSize, this.worldSize);
 
+        // Frustum Culling: Calculate visible bounds
+        const halfW = (this.canvas.width / 2) / this.camera.scale;
+        const halfH = (this.canvas.height / 2) / this.camera.scale;
+        const viewLeft = this.camera.x - halfW - 100;
+        const viewRight = this.camera.x + halfW + 100;
+        const viewTop = this.camera.y - halfH - 100;
+        const viewBottom = this.camera.y + halfH + 100;
+
         // Layered rendering: Draw smaller entities first, then blobs, then viruses
-        // This allows small players to hide under viruses
-        const sortedEntities = [...this.entities].sort((a, b) => a.mass - b.mass);
+        const visibleEntities = this.entities.filter(e =>
+            e.position.x > viewLeft && e.position.x < viewRight &&
+            e.position.y > viewTop && e.position.y < viewBottom
+        );
+
+        const sortedEntities = [...visibleEntities].sort((a, b) => a.mass - b.mass);
 
         // Draw non-virus entities
         sortedEntities.filter(e => e.type !== 'virus').forEach(entity => {
             entity.draw(this.ctx, this.camera);
         });
 
-        // Draw viruses on top (so small blobs hide underneath)
+        // Draw viruses on top
         sortedEntities.filter(e => e.type === 'virus').forEach(virus => {
             virus.draw(this.ctx, this.camera);
         });
 
         // Draw particles
         this.particles.forEach(p => {
-            this.ctx.beginPath();
-            this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
-            this.ctx.strokeStyle = p.color;
-            this.ctx.globalAlpha = p.alpha;
-            this.ctx.lineWidth = 2;
-            this.ctx.stroke();
-            this.ctx.closePath();
+            if (p.x > viewLeft && p.x < viewRight && p.y > viewTop && p.y < viewBottom) {
+                this.ctx.beginPath();
+                this.ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+                this.ctx.strokeStyle = p.color;
+                this.ctx.globalAlpha = p.alpha;
+                this.ctx.lineWidth = 2;
+                this.ctx.stroke();
+                this.ctx.closePath();
+            }
         });
         this.ctx.globalAlpha = 1.0;
 
@@ -477,33 +491,58 @@ export class Game {
     }
 
     private drawMinimap() {
-        const size = 150;
+        const size = 180; // Slightly larger for detail
         const padding = 20;
         const x = this.canvas.width - size - padding;
         const y = padding;
 
         // Background
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
         this.ctx.lineWidth = 2;
         this.ctx.fillRect(x, y, size, size);
         this.ctx.strokeRect(x, y, size, size);
 
-        // Player Position
+        // Draw Viruses on Minimap (Green)
+        this.entities.forEach(e => {
+            if (e instanceof Virus) {
+                const vx = ((e.position.x / this.worldSize) + 0.5) * size;
+                const vy = ((e.position.y / this.worldSize) + 0.5) * size;
+                this.ctx.fillStyle = '#22c55e';
+                this.ctx.beginPath();
+                this.ctx.arc(x + vx, y + vy, 1.5, 0, Math.PI * 2);
+                this.ctx.fill();
+            } else if (e instanceof Blob && e.type !== 'player') {
+                // Bots/Other players (Red)
+                const bx = ((e.position.x / this.worldSize) + 0.5) * size;
+                const by = ((e.position.y / this.worldSize) + 0.5) * size;
+                this.ctx.fillStyle = '#ef4444';
+                this.ctx.beginPath();
+                this.ctx.arc(x + bx, y + by, 2, 0, Math.PI * 2);
+                this.ctx.fill();
+            }
+        });
+
+        // Player Position (Blue)
         if (this.playerBlobs.length > 0) {
-            const px = ((this.camera.x / this.worldSize) + 0.5) * size;
-            const py = ((this.camera.y / this.worldSize) + 0.5) * size;
+            // Use the largest blob for minimap pos
+            const leader = this.playerBlobs.sort((a, b) => b.mass - a.mass)[0];
+            const px = ((leader.position.x / this.worldSize) + 0.5) * size;
+            const py = ((leader.position.y / this.worldSize) + 0.5) * size;
 
             this.ctx.fillStyle = '#3b82f6';
+            this.ctx.shadowBlur = 10;
+            this.ctx.shadowColor = '#3b82f6';
             this.ctx.beginPath();
             this.ctx.arc(x + px, y + py, 4, 0, Math.PI * 2);
             this.ctx.fill();
+            this.ctx.shadowBlur = 0;
 
-            // Pulse effect for player on minimap
-            const pulse = (Math.sin(Date.now() / 200) * 0.5 + 0.5);
-            this.ctx.strokeStyle = `rgba(59, 130, 246, ${pulse})`;
+            // Pulse effect
+            const pulse = (Math.sin(Date.now() / 200) * 4 + 6);
+            this.ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
             this.ctx.beginPath();
-            this.ctx.arc(x + px, y + py, 8, 0, Math.PI * 2);
+            this.ctx.arc(x + px, y + py, pulse, 0, Math.PI * 2);
             this.ctx.stroke();
         }
     }

@@ -616,6 +616,7 @@ function startGame() {
     }
 
     game.respawn();
+    game.resume();
   }
 
   deathPopup.style.display = 'none';
@@ -685,6 +686,7 @@ leaveGameBtn.addEventListener('click', () => {
 respawnBtn.addEventListener('click', () => {
   deathPopup.style.display = 'none';
   game?.respawn();
+  game?.resume();
 });
 
 observeBtn.addEventListener('click', () => {

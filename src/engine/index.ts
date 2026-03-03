@@ -19,7 +19,7 @@ export class Game {
     private obstacles: (Obstacle | BouncePad | EffectZone)[] = [];
     private isEditorMode: boolean = false;
     private selectedShape: ObstacleShape = 'RECT';
-    private isSpectating: boolean = false;
+    private isSpectating: boolean = true;
     private startTime: number = Date.now();
     private gameMode: 'ffa' | 'team' = 'ffa';
     private playerName: string = 'Guest';

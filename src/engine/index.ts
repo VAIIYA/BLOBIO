@@ -1,4 +1,4 @@
-import { Blob, Entity, Food, Virus, PowerUp, PowerUpType, Obstacle, ObstacleShape, BouncePad, EffectZone } from './Entities';
+import { Blob, Entity, Food, Virus, Obstacle, ObstacleShape, BouncePad, EffectZone } from './Entities';
 import { SoundManager } from './SoundManager';
 import { QuadTree, Rectangle } from './QuadTree';
 
@@ -9,13 +9,9 @@ export class Game {
     private entities: Entity[] = [];
     private playerBlobs: Blob[] = [];
     private camera = { x: 0, y: 0, scale: 1 };
-    private worldSize = 15000;
+    private worldSize = 14142;
     private mousePos = { x: 0, y: 0 };
     private onGameOver: (stats: { mass: number }) => void;
-    private playerPowerUps = {
-        speed: 0,
-        shield: 0
-    };
     private obstacles: (Obstacle | BouncePad | EffectZone)[] = [];
     private isEditorMode: boolean = false;
     private selectedShape: ObstacleShape = 'RECT';
@@ -39,23 +35,19 @@ export class Game {
         this.quadTree = new QuadTree(new Rectangle(0, 0, this.worldSize / 2, this.worldSize / 2), 10);
 
 
-        // Initial food
-        this.spawnFood(5000);
-        // Initial bots
-        this.spawnBots(40);
-        // Initial viruses
-        this.spawnViruses(400);
-        // Initial power-ups
-        this.spawnPowerUps(15);
+        // Initial world population (classic Agar/Germs-like density)
+        this.spawnFood(3500);
+        this.spawnBots(24);
+        this.spawnViruses(90);
 
         requestAnimationFrame(this.loop.bind(this));
 
         // Passive food spawning
         setInterval(() => {
-            if (this.entities.filter(e => e instanceof Food).length < 12000) {
-                this.spawnFood(100);
+            if (this.entities.filter(e => e instanceof Food).length < 7000) {
+                this.spawnFood(40);
             }
-        }, 150);
+        }, 120);
     }
 
     private resize() {
@@ -64,7 +56,7 @@ export class Game {
     }
 
     private spawnFood(count: number) {
-        const colors = ['#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        const colors = ['#e74c3c', '#2ecc71', '#f1c40f', '#3498db', '#9b59b6', '#e67e22'];
         for (let i = 0; i < count; i++) {
             const x = (Math.random() - 0.5) * this.worldSize;
             const y = (Math.random() - 0.5) * this.worldSize;
@@ -74,8 +66,8 @@ export class Game {
     }
 
     private spawnBots(count: number) {
-        const names = ['Rex', 'Zorg', 'Alpha', 'Beta', 'Gamer', 'Bot99', 'Blobbie'];
-        const colors = ['#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        const names = ['Rex', 'Zorg', 'Alpha', 'Beta', 'Gamer', 'Bot99', 'Blobbie', 'Nova', 'Manta'];
+        const colors = ['#e74c3c', '#2ecc71', '#f1c40f', '#3498db', '#9b59b6', '#1abc9c'];
         for (let i = 0; i < count; i++) {
             const x = (Math.random() - 0.5) * this.worldSize;
             const y = (Math.random() - 0.5) * this.worldSize;
@@ -85,7 +77,7 @@ export class Game {
                 id: `bot-${Date.now()}-${i}`,
                 position: { x, y },
                 velocity: { x: 0, y: 0 },
-                mass: 15 + Math.random() * 25,
+                mass: 18 + Math.random() * 30,
                 radius: 0,
                 color,
                 type: 'bot',
@@ -97,22 +89,10 @@ export class Game {
 
     private spawnViruses(count: number) {
         for (let i = 0; i < count; i++) {
-            // Spawn more viruses towards the playable areas (center 10k)
-            const x = (Math.random() - 0.5) * 10000;
-            const y = (Math.random() - 0.5) * 10000;
-            const masses = [40, 70, 110, 180]; // Small, Medium, Large, Extra Large
-            const mass = masses[Math.floor(Math.random() * masses.length)];
+            const x = (Math.random() - 0.5) * (this.worldSize - 1200);
+            const y = (Math.random() - 0.5) * (this.worldSize - 1200);
+            const mass = 100 + (Math.random() - 0.5) * 10;
             this.entities.push(new Virus(`virus-${Date.now()}-${i}`, x, y, mass));
-        }
-    }
-
-    private spawnPowerUps(count: number) {
-        const types: PowerUpType[] = ['SPEED', 'SHIELD', 'MASS'];
-        for (let i = 0; i < count; i++) {
-            const x = (Math.random() - 0.5) * (this.worldSize - 400);
-            const y = (Math.random() - 0.5) * (this.worldSize - 400);
-            const type = types[Math.floor(Math.random() * types.length)];
-            this.entities.push(new PowerUp(`pw-${Date.now()}-${i}`, x, y, type));
         }
     }
 
@@ -140,15 +120,6 @@ export class Game {
     private update(dt: number) {
         if (this.isEditorMode || this.isPaused) return;
 
-        // Update power-up timers
-        if (this.playerPowerUps.speed > 0) this.playerPowerUps.speed -= dt * 1000;
-        if (this.playerPowerUps.shield > 0) {
-            this.playerPowerUps.shield -= dt * 1000;
-            this.playerBlobs.forEach(b => (b as any).hasShield = true);
-        } else {
-            this.playerBlobs.forEach(b => (b as any).hasShield = false);
-        }
-
         this.entities.forEach(entity => {
             if (entity instanceof Blob) {
                 entity.decay(dt);
@@ -157,12 +128,7 @@ export class Game {
                 } else if (entity.type === 'player') {
                     // Follow mouse
                     entity.target = this.mouseToWorld(this.mousePos.x, this.mousePos.y);
-                    // Apply speed boost
-                    if (this.playerPowerUps.speed > 0) {
-                        entity.speed = 400; // Double speed
-                    } else {
-                        entity.speed = 200;
-                    }
+                    entity.speed = 280;
                 }
             }
             entity.update(dt);
@@ -197,9 +163,8 @@ export class Game {
             this.camera.x = avgX / totalMass;
             this.camera.y = avgY / totalMass;
 
-            // Zoom out as total mass gets bigger
-            const targetScale = Math.max(0.15, 1 / (1 + (Math.sqrt(totalMass) * 5 - 20) / 100));
-            this.camera.scale += (targetScale - this.camera.scale) * 0.1;
+            const targetScale = Math.max(0.12, Math.min(1.25, 95 / (Math.sqrt(totalMass) + 110)));
+            this.camera.scale += (targetScale - this.camera.scale) * 0.13;
         } else if (this.isSpectating) {
             // Camera follows the largest bot
             const largestBot = this.entities
@@ -236,20 +201,13 @@ export class Game {
                 const dy = blob.position.y - target.position.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
 
-                // 1. Eat food/powerups
-                if (target instanceof Food || target instanceof PowerUp) {
+                // 1. Eat food
+                if (target instanceof Food) {
                     if (dist < blob.radius) {
-                        if (target instanceof PowerUp) {
-                            SoundManager.playPowerUp();
-                            this.applyPowerUp(target.powerType);
-                            this.entities = this.entities.filter(e => e !== target);
-                            setTimeout(() => this.spawnPowerUps(1), 5000);
-                        } else if (target instanceof Food) {
-                            blob.addMass(target.mass);
-                            SoundManager.playEatFood();
-                            this.entities = this.entities.filter(e => e !== target);
-                            this.spawnFood(1);
-                        }
+                        blob.addMass(target.mass);
+                        SoundManager.playEatFood();
+                        this.entities = this.entities.filter(e => e !== target);
+                        this.spawnFood(1);
                     }
                 }
 
@@ -258,7 +216,8 @@ export class Game {
                     const sameTeam = this.gameMode === 'team' && blob.team === target.team && blob.team !== undefined;
                     const bothPlayer = blob.type === 'player' && target.type === 'player';
 
-                    if (!sameTeam && dist < blob.radius && blob.mass > target.mass * 1.1) {
+                    const captureRadius = blob.radius - target.radius * 0.35;
+                    if (!sameTeam && dist < captureRadius && blob.mass > target.mass * 1.1) {
                         // Blob eats target
                         const eaterName = blob.name || (blob.type === 'player' ? this.playerName : 'Bot');
                         const eatenName = target.name || (target instanceof Blob ? (target.type === 'player' ? 'Player' : 'Bot') : 'Something');
@@ -285,7 +244,8 @@ export class Game {
                     } else if (bothPlayer) {
                         // Merging or Pushing logic between player's own blobs
                         const now = Date.now();
-                        const canMerge = (now - blob.splitTimestamp > 15000) && (now - target.splitTimestamp > 15000);
+                        const mergeDelay = this.getMergeDelayMs(blob.mass + target.mass);
+                        const canMerge = (now - blob.splitTimestamp > mergeDelay) && (now - target.splitTimestamp > mergeDelay);
                         const minClearance = blob.radius + target.radius;
 
                         if (canMerge && dist < minClearance * 0.8) {
@@ -309,13 +269,9 @@ export class Game {
                 // 3. Virus Interaction
                 else if (target instanceof Virus) {
                     if (dist < blob.radius && blob.mass > target.mass * 1.1) {
-                        if (this.playerPowerUps.shield > 0 && blob.type === 'player') {
-                            blob.addMass(target.mass / 2);
-                        } else {
-                            this.explodeBlob(blob);
-                        }
+                        this.explodeBlob(blob);
                         this.entities = this.entities.filter(e => e !== target);
-                        setTimeout(() => this.spawnViruses(1), 30000); // Increased respawn time
+                        setTimeout(() => this.spawnViruses(1), 18000);
                     }
                 }
 
@@ -359,6 +315,25 @@ export class Game {
             });
         });
 
+        // Virus feeding with ejected mass (classic virus popping mechanic).
+        const viruses = this.entities.filter(e => e instanceof Virus) as Virus[];
+        const ejectedFoods = this.entities.filter(e => e instanceof Food && e.id.startsWith('food-eject-')) as Food[];
+        ejectedFoods.forEach((food) => {
+            for (const virus of viruses) {
+                const dx = food.position.x - virus.position.x;
+                const dy = food.position.y - virus.position.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist < virus.radius + food.radius) {
+                    this.entities = this.entities.filter(e => e !== food);
+                    virus.addMass(14);
+                    if (virus.mass >= 140) {
+                        this.shootVirus(virus, Math.atan2(food.velocity.y, food.velocity.x));
+                    }
+                    break;
+                }
+            }
+        });
+
         // Check for Game Over
         if (this.playerBlobs.length === 0 && !this.isSpectating) {
             this.handleGameOver();
@@ -367,6 +342,20 @@ export class Game {
 
     private emitParticles(x: number, y: number, color: string) {
         this.particles.push({ x, y, radius: 10, alpha: 0.6, color });
+    }
+
+    private shootVirus(source: Virus, angle: number) {
+        source.mass = 100;
+        source.calculateRadius();
+        const spawned = new Virus(
+            `virus-shot-${Date.now()}-${Math.random()}`,
+            source.position.x + Math.cos(angle) * (source.radius + 10),
+            source.position.y + Math.sin(angle) * (source.radius + 10),
+            100
+        );
+        spawned.velocity.x = Math.cos(angle) * 720;
+        spawned.velocity.y = Math.sin(angle) * 720;
+        this.entities.push(spawned);
     }
 
     private handleGameOver() {
@@ -414,8 +403,8 @@ export class Game {
         this.drawBackground();
         this.drawGrid();
 
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-        this.ctx.lineWidth = 10;
+        this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+        this.ctx.lineWidth = 6;
         this.ctx.strokeRect(-this.worldSize / 2, -this.worldSize / 2, this.worldSize, this.worldSize);
 
         // Frustum Culling: Calculate visible bounds
@@ -469,92 +458,72 @@ export class Game {
     }
 
     private drawBackground() {
-        const layers = [
-            { count: 100, size: 2, speed: 0.1, color: 'rgba(255, 255, 255, 0.4)' },
-            { count: 50, size: 4, speed: 0.3, color: 'rgba(255, 255, 255, 0.6)' },
-            { count: 20, size: 6, speed: 0.6, color: 'rgba(255, 255, 255, 0.8)' }
-        ];
-
-        // We use a fixed seed based on position to keep stars consistent
-        layers.forEach(layer => {
-            this.ctx.fillStyle = layer.color;
-            for (let i = 0; i < layer.count; i++) {
-                // Pseudo-random but deterministic based on loop index
-                const x = ((Math.sin(i * 123) * 0.5 + 0.5) * this.worldSize * 2 - this.worldSize) - (this.camera.x * layer.speed);
-                const y = ((Math.cos(i * 456) * 0.5 + 0.5) * this.worldSize * 2 - this.worldSize) - (this.camera.y * layer.speed);
-
-                // Only draw if within reasonable distance of camera
-                if (Math.abs(x - this.camera.x) < 2000 / this.camera.scale &&
-                    Math.abs(y - this.camera.y) < 2000 / this.camera.scale) {
-                    this.ctx.beginPath();
-                    this.ctx.arc(x, y, layer.size / this.camera.scale, 0, Math.PI * 2);
-                    this.ctx.fill();
-                }
-            }
-        });
+        this.ctx.fillStyle = '#f7f7f7';
+        this.ctx.fillRect(-this.worldSize / 2, -this.worldSize / 2, this.worldSize, this.worldSize);
     }
 
     private drawMinimap() {
-        const size = 180; // Slightly larger for detail
-        const padding = 20;
+        const size = 170;
+        const padding = 16;
         const x = this.canvas.width - size - padding;
-        const y = padding;
+        const y = this.canvas.height - size - padding;
 
         // Background
-        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-        this.ctx.lineWidth = 2;
+        this.ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
+        this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+        this.ctx.lineWidth = 1.5;
         this.ctx.fillRect(x, y, size, size);
         this.ctx.strokeRect(x, y, size, size);
 
-        // Draw Viruses on Minimap (Green)
+        // Draw static map entities.
         this.entities.forEach(e => {
             if (e instanceof Virus) {
                 const vx = ((e.position.x / this.worldSize) + 0.5) * size;
                 const vy = ((e.position.y / this.worldSize) + 0.5) * size;
-                this.ctx.fillStyle = '#22c55e';
+                this.ctx.fillStyle = '#27ae60';
                 this.ctx.beginPath();
-                this.ctx.arc(x + vx, y + vy, 1.5, 0, Math.PI * 2);
+                this.ctx.arc(x + vx, y + vy, 1.2, 0, Math.PI * 2);
                 this.ctx.fill();
             } else if (e instanceof Blob && e.type !== 'player') {
-                // Bots/Other players (Red)
                 const bx = ((e.position.x / this.worldSize) + 0.5) * size;
                 const by = ((e.position.y / this.worldSize) + 0.5) * size;
-                this.ctx.fillStyle = '#ef4444';
+                this.ctx.fillStyle = '#c0392b';
                 this.ctx.beginPath();
-                this.ctx.arc(x + bx, y + by, 2, 0, Math.PI * 2);
+                this.ctx.arc(x + bx, y + by, 1.6, 0, Math.PI * 2);
                 this.ctx.fill();
             }
         });
 
-        // Player Position (Blue)
+        // Draw all player cells.
         if (this.playerBlobs.length > 0) {
-            // Use the largest blob for minimap pos
-            const leader = this.playerBlobs.sort((a, b) => b.mass - a.mass)[0];
-            const px = ((leader.position.x / this.worldSize) + 0.5) * size;
-            const py = ((leader.position.y / this.worldSize) + 0.5) * size;
+            this.ctx.fillStyle = '#2980b9';
+            this.playerBlobs.forEach((blob) => {
+                const px = ((blob.position.x / this.worldSize) + 0.5) * size;
+                const py = ((blob.position.y / this.worldSize) + 0.5) * size;
+                this.ctx.beginPath();
+                this.ctx.arc(x + px, y + py, 2.2, 0, Math.PI * 2);
+                this.ctx.fill();
+            });
 
-            this.ctx.fillStyle = '#3b82f6';
-            this.ctx.shadowBlur = 10;
-            this.ctx.shadowColor = '#3b82f6';
+            // Current viewport indicator.
+            const halfW = (this.canvas.width / 2) / this.camera.scale;
+            const halfH = (this.canvas.height / 2) / this.camera.scale;
+            const rx = x + ((this.camera.x - halfW) / this.worldSize + 0.5) * size;
+            const ry = y + ((this.camera.y - halfH) / this.worldSize + 0.5) * size;
+            const rw = (this.canvas.width / this.camera.scale / this.worldSize) * size;
+            const rh = (this.canvas.height / this.camera.scale / this.worldSize) * size;
+            this.ctx.strokeStyle = 'rgba(41, 128, 185, 0.75)';
+            this.ctx.lineWidth = 1;
             this.ctx.beginPath();
-            this.ctx.arc(x + px, y + py, 4, 0, Math.PI * 2);
-            this.ctx.fill();
-            this.ctx.shadowBlur = 0;
-
-            // Pulse effect
-            const pulse = (Math.sin(Date.now() / 200) * 4 + 6);
-            this.ctx.strokeStyle = 'rgba(59, 130, 246, 0.5)';
-            this.ctx.beginPath();
-            this.ctx.arc(x + px, y + py, pulse, 0, Math.PI * 2);
+            this.ctx.rect(rx, ry, rw, rh);
             this.ctx.stroke();
         }
     }
 
     private drawGrid() {
-        const gridSize = 100;
+        const gridSize = 64;
         this.ctx.beginPath();
-        this.ctx.strokeStyle = 'rgba(255, 255, 255, 0.05)';
+        this.ctx.strokeStyle = 'rgba(0, 0, 0, 0.06)';
         this.ctx.lineWidth = 1;
 
         for (let x = -this.worldSize / 2; x <= this.worldSize / 2; x += gridSize) {
@@ -604,14 +573,8 @@ export class Game {
             .slice(0, 10);
     }
 
-    private applyPowerUp(type: PowerUpType) {
-        if (type === 'SPEED') {
-            this.playerPowerUps.speed = 10000;
-        } else if (type === 'SHIELD') {
-            this.playerPowerUps.shield = 10000;
-        } else if (type === 'MASS') {
-            this.playerBlobs.forEach(b => b.addMass(50));
-        }
+    private getMergeDelayMs(totalMass: number) {
+        return Math.min(30000, Math.max(9000, 8500 + totalMass * 18));
     }
 
     public split() {
@@ -619,7 +582,7 @@ export class Game {
         SoundManager.playSplit();
         const newBlobs: Blob[] = [];
         this.playerBlobs.forEach(blob => {
-            if (blob.mass >= 35) {
+            if (blob.mass >= 36) {
                 const halfMass = blob.mass / 2;
                 blob.mass = halfMass;
                 blob.calculateRadius();
@@ -632,8 +595,8 @@ export class Game {
                     id: `player-${Date.now()}-${Math.random()}`,
                     position: { ...blob.position },
                     velocity: {
-                        x: Math.cos(angle) * 1200, // Increased from 800
-                        y: Math.sin(angle) * 1200  // Increased from 800
+                        x: Math.cos(angle) * 950,
+                        y: Math.sin(angle) * 950
                     },
                     mass: halfMass,
                     radius: 0,
@@ -643,6 +606,7 @@ export class Game {
                     skin: blob.skin,
                     team: blob.team
                 });
+                splitBlob.splitTimestamp = Date.now();
                 newBlobs.push(splitBlob);
             }
         });
@@ -690,7 +654,7 @@ export class Game {
         this.playerBlobs.forEach(blob => {
             if (blob.mass >= 35) {
                 ejected = true;
-                const ejectAmount = 15;
+                const ejectAmount = 16;
                 blob.mass -= ejectAmount;
                 blob.calculateRadius();
 
@@ -706,8 +670,8 @@ export class Game {
                 food.mass = ejectAmount * 0.8;
                 food.calculateRadius();
                 food.velocity = {
-                    x: Math.cos(angle) * 600,
-                    y: Math.sin(angle) * 600
+                    x: Math.cos(angle) * 780,
+                    y: Math.sin(angle) * 780
                 };
                 this.entities.push(food);
             }
@@ -773,7 +737,7 @@ export class Game {
 
     // --- Level System ---
     private levels: Record<string, any> = {
-        'default': { worldSize: 15000, obstacles: [] },
+        'default': { worldSize: 14142, obstacles: [] },
         'the-core': {
             worldSize: 5000,
             obstacles: [

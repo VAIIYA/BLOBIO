@@ -79,29 +79,10 @@ export class Food extends Entity {
     }
 
     draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {
-        const time = Date.now() / 1000;
-        const pulse = 1 + Math.sin(time * 4) * 0.2; // Faster, stronger pulse
-
         ctx.save();
         ctx.beginPath();
-        ctx.arc(this.position.x, this.position.y, this.radius * pulse, 0, Math.PI * 2);
-
-        // Strong neon glow
-        ctx.shadowBlur = 15;
-        ctx.shadowColor = this.color;
-
+        ctx.arc(this.position.x, this.position.y, this.radius, 0, Math.PI * 2);
         ctx.fillStyle = this.color;
-
-        // Add a slight white center for vibrancy
-        const grad = ctx.createRadialGradient(
-            this.position.x, this.position.y, 0,
-            this.position.x, this.position.y, this.radius * pulse
-        );
-        grad.addColorStop(0, '#ffffff');
-        grad.addColorStop(0.3, this.color);
-        grad.addColorStop(1, this.color);
-
-        ctx.fillStyle = grad;
         ctx.fill();
         ctx.closePath();
         ctx.restore();
@@ -128,11 +109,14 @@ export class Blob extends Entity {
 
         if (dist > 5) {
             const angle = Math.atan2(dy, dx);
-            const currentSpeed = this.speed / Math.pow(this.mass, 0.1);
+            const massFactor = Math.pow(this.mass, 0.35);
+            const baseSpeed = this.speed / Math.max(1, massFactor);
+            const distanceFactor = Math.min(1, dist / 300);
+            const currentSpeed = baseSpeed * (0.25 + distanceFactor * 0.75);
             const targetVelX = Math.cos(angle) * currentSpeed;
             const targetVelY = Math.sin(angle) * currentSpeed;
-            this.velocity.x += (targetVelX - this.velocity.x) * 0.1;
-            this.velocity.y += (targetVelY - this.velocity.y) * 0.1;
+            this.velocity.x += (targetVelX - this.velocity.x) * 0.14;
+            this.velocity.y += (targetVelY - this.velocity.y) * 0.14;
         }
 
         super.update(dt);
@@ -270,20 +254,33 @@ export class Blob extends Entity {
             this.applyStyle(ctx);
         }
 
-        // Standard outline
-        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#ef4444' : '#3b82f6') : 'rgba(255, 255, 255, 0.3)';
-        ctx.lineWidth = this.team ? 6 / camera.scale : 2 / camera.scale;
+        // Classic outline
+        ctx.strokeStyle = this.team ? (this.team === 'red' ? '#b91c1c' : '#1d4ed8') : 'rgba(0, 0, 0, 0.28)';
+        ctx.lineWidth = Math.max(1, this.radius * 0.06) / camera.scale;
         ctx.stroke();
 
         // Draw name
-        if (this.name) {
-            ctx.fillStyle = 'white';
-            ctx.font = `bold ${Math.max(12, this.radius / 2)}px Inter, system-ui`;
+        if (this.name && this.radius > 14) {
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `bold ${Math.max(12, this.radius / 2.5)}px Arial`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.shadowBlur = 4;
-            ctx.shadowColor = 'black';
-            ctx.fillText(this.name, this.position.x, this.position.y);
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.lineWidth = 3 / camera.scale;
+            ctx.strokeText(this.name, this.position.x, this.position.y - this.radius * 0.1);
+            ctx.fillText(this.name, this.position.x, this.position.y - this.radius * 0.1);
+        }
+
+        if (this.radius > 22) {
+            const massLabel = Math.floor(this.mass).toString();
+            ctx.fillStyle = '#ffffff';
+            ctx.font = `bold ${Math.max(11, this.radius / 3.2)}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.strokeStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.lineWidth = 3 / camera.scale;
+            ctx.strokeText(massLabel, this.position.x, this.position.y + this.radius * 0.22);
+            ctx.fillText(massLabel, this.position.x, this.position.y + this.radius * 0.22);
         }
 
         // Shield effect
@@ -304,8 +301,6 @@ export class Blob extends Entity {
     private applyStyle(ctx: CanvasRenderingContext2D) {
         if (this.skin === 'neon') {
             ctx.fillStyle = this.color;
-            ctx.shadowBlur = 20;
-            ctx.shadowColor = this.color;
         } else if (this.skin === 'alien') {
             const grad = ctx.createRadialGradient(
                 this.position.x, this.position.y, 0,
@@ -319,12 +314,9 @@ export class Blob extends Entity {
             ctx.globalAlpha = 0.5;
         } else {
             ctx.fillStyle = this.color;
-            ctx.shadowBlur = 10;
-            ctx.shadowColor = this.color;
         }
         ctx.fill();
         ctx.globalAlpha = 1.0;
-        ctx.shadowBlur = 0;
     }
 }
 
@@ -346,10 +338,10 @@ export class Virus extends Entity {
     draw(ctx: CanvasRenderingContext2D, _camera: { x: number, y: number, scale: number }) {
         ctx.save();
         ctx.beginPath();
-        const spikes = 20;
-        const innerRadius = this.radius * 0.8;
+        const spikes = 18;
+        const innerRadius = this.radius * 0.82;
         const outerRadius = this.radius;
-        const rotation = (Date.now() / 2000) % (Math.PI * 2);
+        const rotation = 0;
 
         for (let i = 0; i < spikes * 2; i++) {
             const angle = rotation + (i * Math.PI) / spikes;
@@ -362,19 +354,17 @@ export class Virus extends Entity {
 
         ctx.closePath();
 
-        // Semi-transparent fill with glow
-        ctx.fillStyle = this.color;
-        ctx.globalAlpha = 0.8;
+        ctx.fillStyle = '#33c85d';
         ctx.fill();
 
-        ctx.strokeStyle = '#15803d';
+        ctx.strokeStyle = '#1a8f41';
         ctx.lineWidth = 3 / _camera.scale;
         ctx.stroke();
 
         // Inner detail circle
         ctx.beginPath();
         ctx.arc(this.position.x, this.position.y, innerRadius * 0.8, 0, Math.PI * 2);
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.1)';
+        ctx.fillStyle = '#239a47';
         ctx.fill();
 
         ctx.restore();
